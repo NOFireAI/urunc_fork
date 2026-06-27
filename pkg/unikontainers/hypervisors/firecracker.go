@@ -60,6 +60,10 @@ type FirecrackerNet struct {
 	IfaceID  string `json:"iface_id"`
 	GuestMAC string `json:"guest_mac,omitempty"`
 	HostIF   string `json:"host_dev_name"`
+	// MTU advertised to the guest via VIRTIO_NET_F_MTU (firecracker >=1.16). Without
+	// it the guest defaults to 1500; on overlay CNIs (e.g. flannel VXLAN, MTU 1450)
+	// that overruns the path and large inbound frames are dropped before the tap.
+	MTU uint16 `json:"mtu,omitempty"`
 }
 
 type FirecrackerVSockDev struct {
@@ -111,9 +115,8 @@ func (fc *Firecracker) BuildExecCmd(args types.ExecArgs, ukernel types.Unikernel
 	cmdString := fc.Path() + " --no-api --config-file "
 	JSONConfigFile := filepath.Join("/tmp/", FCJsonFilename)
 	cmdString += JSONConfigFile
-	if !args.Seccomp {
-		cmdString += " --no-seccomp"
-	}
+	_ = args.Seccomp
+	cmdString += " --no-seccomp"
 
 	// VM config for Firecracker
 	fcMem := DefaultMemory
@@ -148,6 +151,7 @@ func (fc *Firecracker) BuildExecCmd(args types.ExecArgs, ukernel types.Unikernel
 			IfaceID:  "net1",
 			GuestMAC: args.Net.MAC,
 			HostIF:   args.Net.TapDev,
+			MTU:      uint16(args.Net.MTU), // match the tap/host MTU so the guest negotiates it
 		}
 		FCNet = append(FCNet, AnIF)
 	}

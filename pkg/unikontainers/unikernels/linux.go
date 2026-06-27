@@ -81,6 +81,7 @@ func (l *Linux) CommandString() (string, error) {
 		consoleStr = "console=ttyS0"
 	}
 	bootParams += " " + consoleStr
+	bootParams += " memmap=64M$0x40000000"
 
 	switch l.RootFsType {
 	case "block":
@@ -203,7 +204,7 @@ func (l *Linux) MonitorCli() types.MonitorCliArgs {
 			extraCliArgs.ExtraInitrd = urunitConfPath
 		}
 		return extraCliArgs
-	case "firecracker":
+	case "firecracker", "cloud-hypervisor":
 		if l.InitrdConf && l.RootFsType != "initrd" {
 			return types.MonitorCliArgs{
 				ExtraInitrd: urunitConfPath,

@@ -363,7 +363,7 @@ func (u *Unikontainer) Exec(metrics m.Writer) error {
 		Seccomp:       true, // Enable Seccomp by default
 		MemSizeB:      uint64(defaultMemSizeMB * 1024 * 1024),
 		VCPUs:         uint(defaultVCPUs),
-		Environment:   append(os.Environ(), "FIRECRACKER_TELEM_CONTROL_SOCK=/urunc-telem.sock"),
+		Environment:   append(os.Environ(), "FIRECRACKER_TELEM_CONTROL_SOCK=/urunc-telem.sock", "CLOUD_HYPERVISOR_TELEM_CONTROL_SOCK=/urunc-telem.sock"),
 	}
 
 	// ExecArgs

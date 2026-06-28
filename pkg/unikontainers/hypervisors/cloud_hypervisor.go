@@ -74,7 +74,7 @@ func (ch *CloudHypervisor) BuildExecCmd(args types.ExecArgs, ukernel types.Unike
 	if args.Sharedfs.Type == "virtiofs" {
 		exArgs = append(exArgs, "--memory", fmt.Sprintf("size=%sM,shared=on", chMem))
 	} else {
-		exArgs = append(exArgs, "--memory", fmt.Sprintf("size=%sM", chMem))
+		exArgs = append(exArgs, "--memory", fmt.Sprintf("size=%sM,shared=on", chMem))
 	}
 
 	// CPU configuration

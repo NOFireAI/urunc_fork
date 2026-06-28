@@ -85,7 +85,7 @@ func (l *Linux) CommandString() (string, error) {
 
 	switch l.RootFsType {
 	case "block":
-		rootParams := "root=/dev/vda rw"
+		rootParams := "root=/dev/vda rw rootwait"
 		bootParams += " " + rootParams
 	case "initrd":
 		rootParams := "root=/dev/ram0 rw"

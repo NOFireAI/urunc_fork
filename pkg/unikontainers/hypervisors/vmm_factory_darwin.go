@@ -34,7 +34,7 @@ var ErrVMMNotInstalled = errors.New("vmm not found")
 var vmmLog = logrus.WithField("subsystem", "monitors")
 
 // NewVMM creates a new VMM instance on darwin
-// Supports QEMU (with HVF acceleration)
+// Supports QEMU (with HVF acceleration) and Virtualization.framework
 func NewVMM(vmmType VmmType, monitors map[string]types.MonitorConfig) (vmm types.VMM, err error) {
 	defer func() {
 		if err != nil {
@@ -74,6 +74,14 @@ func NewVMM(vmmType VmmType, monitors map[string]types.MonitorConfig) (vmm types
 		vmmLog.Debugf("Using QEMU binary: %s", binaryPath)
 
 		return NewQemuDarwin(binaryPath), nil
+
+	case VzVmm:
+		// Virtualization.framework backend
+		vz := NewVzDarwin()
+		if err := vz.Ok(); err != nil {
+			return nil, err
+		}
+		return vz, nil
 
 	default:
 		return nil, errors.New("unsupported VMM type on darwin: " + string(vmmType))

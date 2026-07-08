@@ -65,6 +65,14 @@ type SharedfsParams struct {
 	Path string // The path in the host to share with guest
 }
 
+// SharedDirParams describes one host directory exported to the guest with a
+// dedicated mount tag. Unlike Sharedfs, several of these can be attached to
+// the same VM.
+type SharedDirParams struct {
+	Path string // The path in the host to share with the guest
+	Tag  string // The virtiofs mount tag the guest uses to mount it
+}
+
 type RootfsParams struct {
 	Type        string // The type of rootfs (block, initrd, 9pfs, virtiofs)
 	Path        string // The path in the host where rootfs resides
@@ -95,17 +103,17 @@ type UnikernelParams struct {
 // ExecArgs holds the data required by Execve to start the VMM
 // FIXME: add extra fields if required by additional VMM's
 type ExecArgs struct {
-	ContainerID   string   // The container ID
-	Environment   []string // The environment variables of the monitor
-	Command       string   // The unikernel's command line
-	Seccomp       bool     // Enable or disable seccomp filters for the VMM
-	MemSizeB      uint64   // The size of the memory provided to the VM in bytes
-	VCPUs         uint     // The number of vCPUs to allocate
-	UnikernelPath  string   // The path of the unikernel inside rootfs
-	KernelPath     string   // The path of the kernel image (for Linux kernels on darwin)
-	InitrdPath     string   // The path to the initrd of the unikernel
-	RootfsPath     string   // The path to the rootfs directory or image (for Linux kernels on darwin)
-	BlockDevPath   string   // The path to a block device image (ext4) to attach as virtio-blk
+	ContainerID        string   // The container ID
+	Environment        []string // The environment variables of the monitor
+	Command            string   // The unikernel's command line
+	Seccomp            bool     // Enable or disable seccomp filters for the VMM
+	MemSizeB           uint64   // The size of the memory provided to the VM in bytes
+	VCPUs              uint     // The number of vCPUs to allocate
+	UnikernelPath      string   // The path of the unikernel inside rootfs
+	KernelPath         string   // The path of the kernel image (for Linux kernels on darwin)
+	InitrdPath         string   // The path to the initrd of the unikernel
+	RootfsPath         string   // The path to the rootfs directory or image (for Linux kernels on darwin)
+	BlockDevPath       string   // The path to a block device image (ext4) to attach as virtio-blk
 	LogFile            string   // The path to the log file for serial output (macOS)
 	VirtiofsSocketPath string   // The path to the virtiofs socket (for shared directories)
 	VAccelType         string   // Specifies the vAccel acceleration type(e.g. vsock). When empty, vAccel is disabled
@@ -113,6 +121,7 @@ type ExecArgs struct {
 	VSockDevID         int      // The guest-cid
 	Net                NetDevParams
 	Sharedfs           SharedfsParams
+	SharedDirs         []SharedDirParams // additional tagged virtiofs shares (Vz)
 }
 
 type MonitorCliArgs struct {

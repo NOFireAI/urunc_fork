@@ -81,6 +81,11 @@ func (v *VzDarwin) BuildExecCmd(args types.ExecArgs, ukernel types.Unikernel) ([
 		cmdArgs = append(cmdArgs, "--share", args.Sharedfs.Path, "shared")
 	}
 
+	// Additional tagged shares (one --share per directory)
+	for _, dir := range args.SharedDirs {
+		cmdArgs = append(cmdArgs, "--share", dir.Path, dir.Tag)
+	}
+
 	return cmdArgs, nil
 }
 

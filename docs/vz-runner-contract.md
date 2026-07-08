@@ -26,6 +26,7 @@ vz-runner --kernel <path> [options]
 | `--cmdline <string>` | no | Kernel command line |
 | `--rootfs <path>` | no | Disk image attached as a virtio block device (`/dev/vda`) |
 | `--share <host-path> <tag>` | no, repeatable | Host directory exported over virtiofs with the given tag. The backend uses tag `rootfs` for the root filesystem and `shared` for user-shared directories |
+| `--mac <address>` | no | MAC address for the NAT network device (colon-separated hex). When omitted the runner may use a random address; the backend passes a deterministic one so the guest's DHCP lease can be located on the host by MAC |
 | `--qmp <socket>` | no | Unix socket path on which the runner serves a minimal QMP endpoint (used for graceful shutdown) |
 
 ## Runtime behavior

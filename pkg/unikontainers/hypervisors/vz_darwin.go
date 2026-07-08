@@ -58,6 +58,12 @@ func (v *VzDarwin) BuildExecCmd(args types.ExecArgs, ukernel types.Unikernel) ([
 		cmdArgs = append(cmdArgs, "--cmdline", args.Command)
 	}
 
+	// Deterministic MAC address for the NAT network device, so the guest's
+	// DHCP lease (and therefore its IP) can be found on the host by MAC.
+	if args.Net.MAC != "" {
+		cmdArgs = append(cmdArgs, "--mac", args.Net.MAC)
+	}
+
 	// Block device: attach ext4 image as virtio-blk disk
 	if args.BlockDevPath != "" {
 		cmdArgs = append(cmdArgs, "--rootfs", args.BlockDevPath)

@@ -101,13 +101,18 @@ type ExecArgs struct {
 	Seccomp       bool     // Enable or disable seccomp filters for the VMM
 	MemSizeB      uint64   // The size of the memory provided to the VM in bytes
 	VCPUs         uint     // The number of vCPUs to allocate
-	UnikernelPath string   // The path of the unikernel inside rootfs
-	InitrdPath    string   // The path to the initrd of the unikernel
-	VAccelType    string   // Specifies the vAccel acceleration type(e.g. vsock). When empty, vAccel is disabled
-	VSockDevPath  string   // The host directory where the fc unix socket is created
-	VSockDevID    int      // The guest-cid
-	Net           NetDevParams
-	Sharedfs      SharedfsParams
+	UnikernelPath  string   // The path of the unikernel inside rootfs
+	KernelPath     string   // The path of the kernel image (for Linux kernels on darwin)
+	InitrdPath     string   // The path to the initrd of the unikernel
+	RootfsPath     string   // The path to the rootfs directory or image (for Linux kernels on darwin)
+	BlockDevPath   string   // The path to a block device image (ext4) to attach as virtio-blk
+	LogFile            string   // The path to the log file for serial output (macOS)
+	VirtiofsSocketPath string   // The path to the virtiofs socket (for shared directories)
+	VAccelType         string   // Specifies the vAccel acceleration type(e.g. vsock). When empty, vAccel is disabled
+	VSockDevPath       string   // The host directory where the fc unix socket is created
+	VSockDevID         int      // The guest-cid
+	Net                NetDevParams
+	Sharedfs           SharedfsParams
 }
 
 type MonitorCliArgs struct {

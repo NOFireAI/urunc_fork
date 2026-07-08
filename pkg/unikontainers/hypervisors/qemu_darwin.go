@@ -172,8 +172,13 @@ func (q *QemuDarwin) BuildExecCmd(args types.ExecArgs, ukernel types.Unikernel) 
 		}
 	}
 
-	// Networking via vmnet (macOS-specific)
-	if args.Net.TapDev != "" {
+	// Networking: a unix-socket stream netdev (user-mode gateway; needs no
+	// entitlements or root) takes precedence over vmnet, which requires the
+	// restricted com.apple.vm.networking entitlement.
+	if args.Net.UnixSocket != "" {
+		cmdString += " -netdev stream,id=net0,addr.type=unix,addr.path=" + args.Net.UnixSocket
+		cmdString += " -device virtio-net-pci,netdev=net0,mac=" + args.Net.MAC
+	} else if args.Net.TapDev != "" {
 		// Use vmnet-shared for NAT mode networking
 		netcli := ukernel.MonitorNetCli(args.Net.TapDev, args.Net.MAC)
 		if netcli == "" {
@@ -208,6 +213,12 @@ func (q *QemuDarwin) BuildExecCmd(args types.ExecArgs, ukernel types.Unikernel) 
 		// Use 9pfs for shared directories - works on macOS without virtiofsd daemon
 		cmdString += " -fsdev local,id=fs0,security_model=none,path=" + args.Sharedfs.Path
 		cmdString += " -device virtio-9p-pci,fsdev=fs0,mount_tag=fs0"
+	}
+
+	// Additional tagged shares (one 9p export per directory)
+	for _, dir := range args.SharedDirs {
+		cmdString += " -fsdev local,id=" + dir.Tag + ",security_model=none,path=" + dir.Path
+		cmdString += " -device virtio-9p-pci,fsdev=" + dir.Tag + ",mount_tag=" + dir.Tag
 	}
 
 	// Extra monitor arguments

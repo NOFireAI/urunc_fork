@@ -27,7 +27,7 @@ vz-runner --kernel <path> [options]
 | `--rootfs <path>` | no | Disk image attached as a virtio block device (`/dev/vda`) |
 | `--share <host-path> <tag>` | no, repeatable | Host directory exported over virtiofs with the given tag. The backend uses tag `rootfs` for the root filesystem and `shared` for user-shared directories |
 | `--mac <address>` | no | MAC address for the NAT network device (colon-separated hex). When omitted the runner may use a random address; the backend passes a deterministic one so the guest's DHCP lease can be located on the host by MAC |
-| `--net-fd <n>` | no | Inherited file descriptor of a connected datagram socket; the runner attaches it as a second virtio-net device (`VZFileHandleNetworkDeviceAttachment`). Used by orchestration layers to place guests on a userspace L2 switch segment, since the NAT attachment isolates guests from each other |
+| `--net-fd <n>` | no | Inherited file descriptor of a connected datagram socket; the runner backs the guest's single virtio-net device with it (`VZFileHandleNetworkDeviceAttachment`) **instead of** the NAT attachment. Used by orchestration layers to place guests on a user-mode gateway network, since the NAT attachment isolates guests from each other. The guest still sees exactly one interface |
 | `--qmp <socket>` | no | Unix socket path on which the runner serves a minimal QMP endpoint (used for graceful shutdown) |
 
 ## Runtime behavior

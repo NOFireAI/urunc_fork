@@ -63,6 +63,13 @@ func (q *Qemu) Path() string {
 func (q *Qemu) BuildExecCmd(args types.ExecArgs, ukernel types.Unikernel) ([]string, error) {
 	qemuMem := BytesToStringMB(args.MemSizeB)
 	cmdString := q.binaryPath + " -m " + qemuMem + "M"
+	// Back guest RAM with a shareable memfd so the out-of-band telem introspection
+	// can mmap it from the host (mirrors the cloud-hypervisor shared=on fix). Skip
+	// when a shared-fs backend defines its own memory-backend below.
+	if args.Sharedfs.Type != "9pfs" && args.Sharedfs.Type != "virtiofs" {
+		cmdString += " -object memory-backend-memfd,id=telemmem,size=" + qemuMem + "M,share=on"
+		cmdString += " -numa node,memdev=telemmem"
+	}
 	cmdString += " -L /usr/share/qemu"                                  // Set the path for qemu bios/data
 	cmdString += " -cpu host"                                           // Choose CPU
 	cmdString += " -enable-kvm"                                         // Enable KVM to use CPU virt extensions

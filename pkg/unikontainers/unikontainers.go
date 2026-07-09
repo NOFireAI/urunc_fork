@@ -1,3 +1,6 @@
+//go:build linux
+// +build linux
+
 // Copyright (c) 2023-2026, Nubificus LTD
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,11 +45,8 @@ import (
 )
 
 const (
-	monitorRootfsDirName     string = "monRootfs"
 	containerRootfsMountPath string = "/cntrRootfs"
 )
-
-var uniklog = logrus.WithField("subsystem", "unikontainers")
 
 var ErrQueueProxy = errors.New("this a queue proxy container")
 var ErrNotUnikernel = errors.New("this is not a unikernel container")
@@ -61,6 +61,7 @@ type Unikontainer struct {
 	UruncCfg *UruncConfig
 	Listener *net.UnixListener
 	Conn     *net.UnixConn
+	launcher launcher
 }
 
 // New parses the bundle and creates a new Unikontainer object
@@ -108,6 +109,7 @@ func New(bundlePath string, containerID string, rootDir string, cfg *UruncConfig
 		Spec:     spec,
 		State:    state,
 		UruncCfg: cfg,
+		launcher: linuxLauncher{},
 	}, nil
 }
 
@@ -136,6 +138,7 @@ func Get(containerID string, rootDir string) (*Unikontainer, error) {
 	u.RootDir = rootDir
 	u.Spec = spec
 	u.UruncCfg = UruncConfigFromMap(state.Annotations)
+	u.launcher = linuxLauncher{}
 	return u, nil
 }
 
@@ -231,174 +234,38 @@ func (u *Unikontainer) SetupNet() (types.NetDevParams, error) {
 	return netArgs, nil
 }
 
-// chooseRootfs determines the best rootfs configuration based on available options
-// Priority order:
-//  1. Initrd (if specified)
-//  2. Explicit block device annotation (if mounted at /)
-//  3. Container rootfs as block device (if MountRootfs=true and supported)
-//  4. Container rootfs as shared-fs: virtiofs > 9pfs (if MountRootfs=true and supported)
-//  5. No rootfs
-func ChooseRootfs(bundle, specRoot string, annot map[string]string, cfg *UruncConfig) (types.RootfsParams, error) {
-	bundleDir := filepath.Clean(bundle)
-	rootfsDir := filepath.Clean(specRoot)
-	rootfsDir, err := resolveAgainstBase(bundleDir, rootfsDir)
-	if err != nil {
-		uniklog.Errorf("could not resolve rootfs directory %s: %v", rootfsDir, err)
-		return types.RootfsParams{}, err
-	}
-
-	if cfg == nil {
-		return types.RootfsParams{}, fmt.Errorf("urunc config is required for guest rootfs selection")
-	}
-
-	unikernelType := annot[annotType]
-	unikernel, err := unikernels.New(unikernelType)
-	if err != nil {
-		return types.RootfsParams{}, err
-	}
-
-	vmmType := annot[annotHypervisor]
-	vmm, err := hypervisors.NewVMM(hypervisors.VmmType(vmmType), cfg.Monitors)
-	if err != nil {
-		return types.RootfsParams{}, err
-	}
-
-	virtiofsdConfig := cfg.ExtraBins["virtiofsd"]
-
-	selector := &rootfsSelector{
-		bundle:     bundleDir,
-		cntrRootfs: rootfsDir,
-		annot:      annot,
-		unikernel:  unikernel,
-		vmm:        vmm,
-		vfsdPath:   virtiofsdConfig.Path,
-	}
-
-	// Priority 1: Initrd
-	result, ok := selector.tryInitrd()
-	if ok {
-		return result, nil
-	}
-
-	// Priority 2: Explicit block annotation
-	result, ok = selector.tryExplicitBlock()
-	if ok {
-		return result, nil
-	}
-
-	// Priority 3 & 4: Container rootfs (block or shared-fs)
-	result, ok = selector.tryContainerRootfs()
-	if ok {
-		return switchMonRootfs(result, bundleDir)
-	}
-
-	if selector.shouldMountContainerRootfs() {
-		return types.RootfsParams{}, fmt.Errorf("can not use the container rootfs as the sandbox's guest rootfs through block or shared-fs")
-	}
-
-	uniklog.Info("no rootfs configured for guest")
-	result.MonRootfs = rootfsDir
-
-	return result, nil
-}
-
 // nolint:gocyclo
 func (u *Unikontainer) Exec(metrics m.Writer) error {
 	metrics.Capture(m.TS15)
 
-	// container Paths
-	// Make sure paths are clean
-	bundleDir := filepath.Clean(u.State.Bundle)
-	rootfsDir := filepath.Clean(u.Spec.Root.Path)
-	rootfsDir, err := resolveAgainstBase(bundleDir, rootfsDir)
+	// Platform-neutral prologue: resolve the rootfs, construct the monitor and
+	// unikernel, and build the base ExecArgs/UnikernelParams from the OCI spec
+	// and urunc config. Shared with the darwin runner via buildExecContext.
+	ec, err := buildExecContext(u.Spec, u.State.Annotations, u.State.ID, u.State.Bundle, u.UruncCfg)
 	if err != nil {
-		uniklog.Errorf("could not resolve rootfs directory %s: %v", rootfsDir, err)
 		return err
 	}
-
-	// unikernel
+	unikernel := ec.Unikernel
+	vmm := ec.VMM
+	vmmType := ec.VMMType
 	unikernelType := u.State.Annotations[annotType]
-	unikernel, err := unikernels.New(unikernelType)
-	if err != nil {
-		return err
-	}
+	unikernelPath := ec.UnikernelPath
+	initrdPath := ec.InitrdPath
+	virtiofsdConfig := ec.VirtiofsdConfig
+	vmmArgs := ec.VMMArgs
+	unikernelParams := ec.UnikernelParams
 
-	// Vmm
-	vmmType := u.State.Annotations[annotHypervisor]
-	vmm, err := hypervisors.NewVMM(hypervisors.VmmType(vmmType), u.UruncCfg.Monitors)
-	if err != nil {
-		return err
-	}
-
-	// unikernelParams
-	unikernelVersion := u.State.Annotations[annotVersion]
-
-	// ExecArgs
-	unikernelPath := u.State.Annotations[annotBinary]
-	initrdPath := u.State.Annotations[annotInitrd]
-
-	// debug
 	uniklog.WithFields(logrus.Fields{
-		"bundle directory":  bundleDir,
-		"rootfs directory":  rootfsDir,
-		"vmm type":          vmmType,
-		"unikernel type":    unikernelType,
-		"unikernel version": unikernelVersion,
-		"unikernel Path":    unikernelPath,
-		"initrd Path":       initrdPath,
+		"bundle directory": u.State.Bundle,
+		"rootfs directory": ec.RootfsDir,
+		"vmm type":         vmmType,
+		"unikernel type":   unikernelType,
+		"unikernel Path":   unikernelPath,
+		"initrd Path":      initrdPath,
 	}).Debug("Initialization values")
 
-	// ExecArgs
-	defaultVCPUs := u.UruncCfg.Monitors[vmmType].DefaultVCPUs
-	if defaultVCPUs < 1 {
-		defaultVCPUs = 1
-	}
-	defaultMemSizeMB := u.UruncCfg.Monitors[vmmType].DefaultMemoryMB
-
-	// ExecArgs
-	vmmArgs := types.ExecArgs{
-		ContainerID:   u.State.ID,
-		UnikernelPath: unikernelPath,
-		InitrdPath:    initrdPath,
-		Seccomp:       true, // Enable Seccomp by default
-		MemSizeB:      uint64(defaultMemSizeMB * 1024 * 1024),
-		VCPUs:         uint(defaultVCPUs),
-		Environment:   os.Environ(),
-	}
-
-	// ExecArgs
-	// If memory limit is set in spec, use it instead of the config default value
-	if u.Spec.Linux.Resources != nil && u.Spec.Linux.Resources.Memory != nil {
-		if u.Spec.Linux.Resources.Memory.Limit != nil {
-			if *u.Spec.Linux.Resources.Memory.Limit > 0 {
-				vmmArgs.MemSizeB = uint64(*u.Spec.Linux.Resources.Memory.Limit) // nolint:gosec
-			}
-		}
-	}
-
-	// ExecArgs
-	// Check if container is set to unconfined -- disable seccomp
-	if u.Spec.Linux.Seccomp == nil {
+	if !vmmArgs.Seccomp {
 		uniklog.Warn("Seccomp is disabled")
-		vmmArgs.Seccomp = false
-	}
-
-	procAttrs := types.ProcessConfig{
-		UID:     u.Spec.Process.User.UID,
-		GID:     u.Spec.Process.User.GID,
-		WorkDir: u.Spec.Process.Cwd,
-	}
-	// UnikernelParams
-	// populate unikernel params
-	unikernelParams := types.UnikernelParams{
-		CmdLine:  u.Spec.Process.Args,
-		EnvVars:  u.Spec.Process.Env,
-		Monitor:  vmmType,
-		Version:  unikernelVersion,
-		ProcConf: procAttrs,
-	}
-	if len(unikernelParams.CmdLine) == 0 {
-		unikernelParams.CmdLine = strings.Fields(u.State.Annotations[annotCmdLine])
 	}
 
 	// handle network
@@ -415,9 +282,6 @@ func (u *Unikontainer) Exec(metrics m.Writer) error {
 
 	// ExecArgs
 	vmmArgs.Net = netArgs
-
-	// virtiofsd config
-	virtiofsdConfig := u.UruncCfg.ExtraBins["virtiofsd"]
 
 	// guest rootfs
 	// block
@@ -635,35 +499,10 @@ func (u *Unikontainer) Exec(metrics m.Writer) error {
 	uniklog.Debug("calling vmm execve")
 	metrics.Capture(m.TS18)
 
-	// Build the VMM command once and verify it can be constructed successfully.
-	// This ensures we don't report the container as started if command building fails.
-	execCmd, err := vmm.BuildExecCmd(vmmArgs, unikernel)
-	if err != nil {
-		uniklog.WithError(err).Error("failed to build VMM command")
-		return err
-	}
-
-	// Notify urunc start that the monitor is ready to execute.
-	// We send this after BuildExecCmd succeeds to avoid reporting a container
-	// as started when the VMM command cannot be built.
-	// TODO: The container can still be reported as running if the PreExec step
-	// (e.g., BPF/seccomp filter setup) fails after this point. We should find
-	// a way to handle that case as well.
-	err = u.SendMessage(StartSuccess)
-	if err != nil {
-		return err
-	}
-
-	// Perform any monitor-specific pre-exec setup (e.g., seccomp filters for HVT).
-	err = vmm.PreExec(vmmArgs)
-	if err != nil {
-		uniklog.WithError(err).Error("failed to perform pre-exec setup")
-		return err
-	}
-
-	// Execute the VMM using the command we built earlier.
-	uniklog.WithField("command", execCmd).Debug("Ready to execve VMM")
-	return syscall.Exec(vmm.Path(), execCmd, vmmArgs.Environment) //nolint: gosec
+	// Final monitor handoff, behind the platform launcher seam. On Linux this
+	// notifies the shim and syscall.Exec's into the monitor (and does not
+	// return on success); it is the same sequence previously inlined here.
+	return u.launcher.launch(u, vmm, unikernel, vmmArgs)
 }
 
 func setupUser(user specs.User) error {

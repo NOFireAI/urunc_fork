@@ -1,3 +1,6 @@
+//go:build linux
+// +build linux
+
 // Copyright (c) 2023-2026, Nubificus LTD
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,18 +31,8 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/sys/unix"
-
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/urunc-dev/urunc/internal/constants"
-)
-
-const (
-	configFilename    = "config.json"
-	stateFilename     = "state.json"
-	initPidFilename   = "init.pid"
-	uruncJSONFilename = "urunc.json"
-	rootfsDirName     = "rootfs"
 )
 
 // copy sourceFile to targetDir
@@ -84,26 +77,6 @@ func moveFile(sourceFile string, targetDir string) error {
 }
 
 // loadSpec returns the Spec found in the given bundle directory
-func loadSpec(bundleDir string) (*specs.Spec, error) {
-	var spec specs.Spec
-
-	absBundleDir, err := filepath.Abs(bundleDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to find absolute path of bundle: %w", err)
-	}
-
-	configFile := filepath.Join(absBundleDir, configFilename)
-	specData, err := os.ReadFile(configFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read specification file: %w", err)
-	}
-
-	if err := json.Unmarshal(specData, &spec); err != nil {
-		return nil, fmt.Errorf("failed to parse specification json: %w", err)
-	}
-
-	return &spec, nil
-}
 
 // writePidFile writes the content of pid to the file defined by path
 func writePidFile(path string, pid int) error {
@@ -213,37 +186,6 @@ func spawnProcess(binaryPath string, args []string) error {
 	}
 
 	return nil
-}
-
-func resolveAgainstBase(base string, path string) (string, error) {
-	resolvedPath := path
-
-	if !filepath.IsAbs(path) {
-		baseAbs := base
-		var err error
-
-		if !filepath.IsAbs(base) {
-			baseAbs, err = filepath.Abs(base)
-			if err != nil {
-				return "", fmt.Errorf("could not get absolute path of %s: %w", base, err)
-			}
-		}
-		resolvedPath = filepath.Join(baseAbs, path)
-	}
-
-	return resolvedPath, nil
-}
-
-func fileExists(fpath string) bool {
-	var fileInfo unix.Stat_t
-
-	err := unix.Stat(fpath, &fileInfo)
-	if err != nil {
-		uniklog.Infof("Stat %s failed with: %v", fpath, err)
-		return false
-	}
-
-	return true
 }
 
 // containsNS checks of the container's configuration contains a specific namespace

@@ -30,44 +30,22 @@ type VmmType string
 var ErrVMMNotInstalled = errors.New("vmm not found")
 var vmmLog = logrus.WithField("subsystem", "monitors")
 
+// VMMFactory describes how to construct one monitor. The registry
+// (`vmmFactories`) that maps VmmType -> VMMFactory is platform-specific
+// (Linux monitors vs the macOS QEMU/Vz set), but the NewVMM driver that
+// consumes it is shared. precheck and pathFunc are optional per-monitor hooks
+// for platform quirks (e.g. the darwin HVF check and QEMU binary discovery)
+// so the driver stays platform-neutral.
 type VMMFactory struct {
 	binary     string
 	createFunc func(binary, binaryPath string, vhost bool) types.VMM
+	precheck   func() error                                                  // optional availability gate
+	pathFunc   func(monitors map[string]types.MonitorConfig) (string, error) // optional custom binary resolution
 }
 
-var vmmFactories = map[VmmType]VMMFactory{
-	SptVmm: {
-		binary: SptBinary,
-		createFunc: func(binary, binaryPath string, _ bool) types.VMM {
-			return &SPT{binary: binary, binaryPath: binaryPath}
-		},
-	},
-	HvtVmm: {
-		binary: HvtBinary,
-		createFunc: func(binary, binaryPath string, _ bool) types.VMM {
-			return &HVT{binary: binary, binaryPath: binaryPath}
-		},
-	},
-	QemuVmm: {
-		binary: QemuBinary,
-		createFunc: func(binary, binaryPath string, vhost bool) types.VMM {
-			return &Qemu{binary: binary, binaryPath: binaryPath, vhost: vhost}
-		},
-	},
-	FirecrackerVmm: {
-		binary: FirecrackerBinary,
-		createFunc: func(binary, binaryPath string, _ bool) types.VMM {
-			return &Firecracker{binary: binary, binaryPath: binaryPath}
-		},
-	},
-	CloudHypervisorVmm: {
-		binary: CloudHypervisorBinary,
-		createFunc: func(binary, binaryPath string, _ bool) types.VMM {
-			return &CloudHypervisor{binary: binary, binaryPath: binaryPath}
-		},
-	},
-}
-
+// NewVMM constructs a monitor of the requested type from the platform's
+// registry. Shared across Linux and darwin; only the `vmmFactories` map and
+// the optional hooks differ per platform.
 func NewVMM(vmmType VmmType, monitors map[string]types.MonitorConfig) (vmm types.VMM, err error) {
 	defer func() {
 		if err != nil {
@@ -75,23 +53,27 @@ func NewVMM(vmmType VmmType, monitors map[string]types.MonitorConfig) (vmm types
 		}
 	}()
 
-	// Handle Hedge separately since it is not in vmmFactories
-	if vmmType == HedgeVmm {
-		hedge := Hedge{}
-		if err := hedge.Ok(); err != nil {
-			return nil, ErrVMMNotInstalled
-		}
-		return &hedge, nil
-	}
-
 	factory, exists := vmmFactories[vmmType]
 	if !exists {
 		return nil, fmt.Errorf("vmm \"%s\" is not supported", vmmType)
 	}
 
-	vmmPath, err := getVMMPath(vmmType, factory.binary, monitors)
-	if err != nil {
-		return nil, err
+	if factory.precheck != nil {
+		if err := factory.precheck(); err != nil {
+			return nil, err
+		}
+	}
+
+	var vmmPath string
+	if factory.binary != "" {
+		if factory.pathFunc != nil {
+			vmmPath, err = factory.pathFunc(monitors)
+		} else {
+			vmmPath, err = getVMMPath(vmmType, factory.binary, monitors)
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return factory.createFunc(factory.binary, vmmPath, monitors[string(vmmType)].Vhost), nil

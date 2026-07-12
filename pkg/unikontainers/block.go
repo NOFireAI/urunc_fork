@@ -45,6 +45,7 @@ type blockRootfs struct {
 	uruncJSONPath string
 	guestType     string
 	guest         types.Unikernel
+	restore       bool
 }
 
 // getMountInfo determines whether the provided path is a mount point
@@ -230,19 +231,27 @@ func (b blockRootfs) preSetup() error {
 		return nil
 	}
 
-	err := copyMountfiles(b.mountedPath, b.mounts)
-	if err != nil {
-		return fmt.Errorf("failed to copy files from mount list: %w", err)
+	// On restore, the guest resumes with the block device state it had at
+	// checkpoint time: the rootfs content must not be modified (no mount
+	// file copies, no boot file extraction — the latter already happened
+	// before the original cold boot and the guest does not boot again).
+	// Only the unmount below is still required, so the resumed guest gets
+	// exclusive access to the device.
+	if !b.restore {
+		err := copyMountfiles(b.mountedPath, b.mounts)
+		if err != nil {
+			return fmt.Errorf("failed to copy files from mount list: %w", err)
+		}
+
+		// FIXME: This approach fills up /run with unikernel binaries and
+		// urunc.json files for each unikernel instance we run
+		err = extractBootFiles(b.mountedPath, b.monRootfs, b.kernelPath, b.uruncJSONPath, b.initrdPath)
+		if err != nil {
+			return fmt.Errorf("failed to extract boot files from rootfs: %w", err)
+		}
 	}
 
-	// FIXME: This approach fills up /run with unikernel binaries and
-	// urunc.json files for each unikernel instance we run
-	err = extractBootFiles(b.mountedPath, b.monRootfs, b.kernelPath, b.uruncJSONPath, b.initrdPath)
-	if err != nil {
-		return fmt.Errorf("failed to extract boot files from rootfs: %w", err)
-	}
-
-	err = mount.Unmount(b.mountedPath)
+	err := mount.Unmount(b.mountedPath)
 	if err != nil {
 		return fmt.Errorf("failed to unmount rootfs: %w", err)
 	}

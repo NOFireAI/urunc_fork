@@ -16,8 +16,10 @@ package hypervisors
 
 import (
 	"fmt"
+	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/urunc-dev/urunc/pkg/unikontainers/types"
 	"golang.org/x/sys/unix"
@@ -67,6 +69,9 @@ func (q *Qemu) BuildExecCmd(args types.ExecArgs, ukernel types.Unikernel) ([]str
 	cmdString += " -cpu host"                                           // Choose CPU
 	cmdString += " -enable-kvm"                                         // Enable KVM to use CPU virt extensions
 	cmdString += " -display none -vga none -serial stdio -monitor null" // Disable graphic output
+	// The QMP socket stays enabled so a running microVM can later be
+	// paused/resumed and snapshotted (checkpoint/restore).
+	cmdString += " -qmp unix:" + InNsAPISockPath + ",server=on,wait=off"
 
 	if args.VCPUs > 0 {
 		cmdString += fmt.Sprintf(" -smp %d", args.VCPUs)
@@ -150,6 +155,100 @@ func (q *Qemu) BuildExecCmd(args types.ExecArgs, ukernel types.Unikernel) ([]str
 // PreExec performs pre-execution setup. QEMU has no special pre-exec requirements.
 func (q *Qemu) PreExec(_ types.ExecArgs) error {
 	return nil
+}
+
+// QemuSnapshotStateFile is the name of the file a QEMU snapshot (a file-URI
+// migration stream, containing device state and guest memory) is stored in.
+const QemuSnapshotStateFile string = "vmstate"
+
+// qmpSessionTimeout bounds a whole QMP client session. Snapshot and restore
+// sessions stream the entire guest memory, so this must accommodate reading
+// or writing hundreds of MiB.
+const qmpSessionTimeout = 120 * time.Second
+
+// SupportsSnapshot returns true as QEMU supports snapshot/restore through
+// QMP file-URI migration (QEMU >= 8.2).
+func (q *Qemu) SupportsSnapshot() bool {
+	return true
+}
+
+// PauseVM pauses the vCPUs of a running QEMU microVM.
+func (q *Qemu) PauseVM(sockPath string) error {
+	client, err := dialQMP(sockPath, qmpSessionTimeout)
+	if err != nil {
+		return err
+	}
+	defer client.close()
+	_, err = client.execute("stop", nil)
+	return err
+}
+
+// ResumeVM resumes the vCPUs of a paused QEMU microVM.
+func (q *Qemu) ResumeVM(sockPath string) error {
+	client, err := dialQMP(sockPath, qmpSessionTimeout)
+	if err != nil {
+		return err
+	}
+	defer client.close()
+	_, err = client.execute("cont", nil)
+	return err
+}
+
+// SnapshotVM writes a full snapshot of a paused microVM into inNsDir using a
+// file-URI migration, which QEMU resolves inside its own mount namespace.
+// A file URI (instead of exec:) matters: the monitor rootfs has no shell.
+func (q *Qemu) SnapshotVM(sockPath string, inNsDir string) error {
+	client, err := dialQMP(sockPath, qmpSessionTimeout)
+	if err != nil {
+		return err
+	}
+	defer client.close()
+	_, err = client.execute("migrate", map[string]any{
+		"uri": "file:" + filepath.Join(inNsDir, QemuSnapshotStateFile),
+	})
+	if err != nil {
+		return err
+	}
+	return client.waitMigrationCompleted()
+}
+
+// BuildRestoreCmd builds the argv to launch a fresh QEMU process that
+// restores the VM from the snapshot staged in inNsDir. QEMU restore is an
+// incoming migration: the guest-visible machine must be identical, so the
+// exact boot command line is rebuilt (only host-side backends, like the tap
+// device name, may differ) and extended with -incoming. -S keeps the loaded
+// VM paused until FinishRestore resumes it.
+func (q *Qemu) BuildRestoreCmd(args types.ExecArgs, ukernel types.Unikernel, inNsDir string) ([]string, error) {
+	exArgs, err := q.BuildExecCmd(args, ukernel)
+	if err != nil {
+		return nil, err
+	}
+	return append(exArgs,
+		"-incoming", "file:"+filepath.Join(inNsDir, QemuSnapshotStateFile),
+		"-S",
+	), nil
+}
+
+// PrepareRestore is a no-op for QEMU: the restored machine configuration,
+// including the new tap device name, is fully described by the rebuilt
+// command line rather than by the snapshot files.
+func (q *Qemu) PrepareRestore(_ string, _ NetOverride) error {
+	return nil
+}
+
+// FinishRestore waits until the incoming migration has loaded (the VM
+// reaches the paused run state) and resumes the microVM.
+func (q *Qemu) FinishRestore(sockPath string, _ string, _ NetOverride) error {
+	client, err := dialQMP(sockPath, qmpSessionTimeout)
+	if err != nil {
+		return err
+	}
+	defer client.close()
+	if err := client.waitRunState("paused"); err != nil {
+		return err
+	}
+	_, err = client.execute("cont", nil)
+	return err
 }
 
 func getVirtioNetArg() string {

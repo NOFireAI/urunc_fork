@@ -105,7 +105,19 @@ func (q *Qemu) BuildExecCmd(args types.ExecArgs, ukernel types.Unikernel) ([]str
 	cmdString += " -L " + q.firmwarePath()
 	cmdString += " -cpu host"
 	cmdString += " " + q.accelFlag()
-	cmdString += " -display none -vga none -serial stdio -monitor null"
+	cmdString += " -display none -vga none -monitor null"
+	// The guest boot cmdline selects the console device: a guest asking
+	// for hvc0 gets a virtio console, where console I/O rides virtqueues
+	// instead of trapping to the VMM on every UART register access. Any
+	// other guest keeps the emulated UART on stdio. signal=off leaves
+	// terminal signals (e.g. Ctrl-C) to the guest instead of QEMU.
+	if strings.Contains(args.Command, "console=hvc0") {
+		cmdString += " -chardev stdio,id=urunc-console,signal=off"
+		cmdString += " -device virtio-serial-pci"
+		cmdString += " -device virtconsole,chardev=urunc-console"
+	} else {
+		cmdString += " -serial stdio"
+	}
 
 	if args.VCPUs > 0 {
 		cmdString += fmt.Sprintf(" -smp %d", args.VCPUs)

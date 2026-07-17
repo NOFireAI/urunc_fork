@@ -66,9 +66,14 @@ type OpenRequest struct {
 	Argv []string `json:"argv"`
 	Env  []string `json:"env,omitempty"`
 	Cwd  string   `json:"cwd,omitempty"`
-	TTY  bool     `json:"tty"`
-	Rows uint16   `json:"rows,omitempty"`
-	Cols uint16   `json:"cols,omitempty"`
+	// User selects the identity to run as: a name ("claude"), a uid
+	// ("501") or "uid:gid" ("501:1000"). Empty means root. The agent
+	// resolves names and lone uids against the guest's /etc/passwd and
+	// fills in HOME/USER/LOGNAME/SHELL and supplementary groups.
+	User string `json:"user,omitempty"`
+	TTY  bool   `json:"tty"`
+	Rows uint16 `json:"rows,omitempty"`
+	Cols uint16 `json:"cols,omitempty"`
 }
 
 // Resize updates the window size of a tty session.

@@ -35,6 +35,8 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"os/user"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -292,6 +294,100 @@ func serveConn(rw io.ReadWriter) {
 	}
 }
 
+// guestUser is a resolved guest identity for an exec session.
+type guestUser struct {
+	uid    uint32
+	gid    uint32
+	groups []uint32
+	name   string
+	home   string
+	shell  string
+}
+
+// resolveUser turns an OpenRequest user spec (name, uid, or uid:gid) into
+// a guest identity. An empty spec means root and returns nil.
+func resolveUser(spec string) (*guestUser, error) {
+	if spec == "" {
+		return nil, nil
+	}
+
+	uidPart, gidPart, hasGID := strings.Cut(spec, ":")
+
+	var u *user.User
+	var err error
+	if _, nerr := strconv.ParseUint(uidPart, 10, 32); nerr == nil {
+		u, err = user.LookupId(uidPart)
+	} else {
+		u, err = user.Lookup(uidPart)
+	}
+
+	gu := &guestUser{home: "/", shell: "/bin/sh"}
+	if err == nil {
+		uid, uerr := strconv.ParseUint(u.Uid, 10, 32)
+		gid, gerr := strconv.ParseUint(u.Gid, 10, 32)
+		if uerr != nil || gerr != nil {
+			return nil, fmt.Errorf("non-numeric uid/gid for user %q", spec)
+		}
+		gu.uid, gu.gid = uint32(uid), uint32(gid)
+		gu.name = u.Username
+		if u.HomeDir != "" {
+			gu.home = u.HomeDir
+		}
+		if sh := lookupShell(u.Username); sh != "" {
+			gu.shell = sh
+		}
+		if ids, gerr := u.GroupIds(); gerr == nil {
+			for _, id := range ids {
+				if g, perr := strconv.ParseUint(id, 10, 32); perr == nil {
+					gu.groups = append(gu.groups, uint32(g))
+				}
+			}
+		}
+	} else {
+		// Not in /etc/passwd: accept a raw numeric uid.
+		uid, nerr := strconv.ParseUint(uidPart, 10, 32)
+		if nerr != nil {
+			return nil, fmt.Errorf("unknown user %q", uidPart)
+		}
+		gu.uid = uint32(uid)
+		gu.gid = uint32(uid)
+		gu.name = uidPart
+	}
+
+	if hasGID {
+		gid, nerr := strconv.ParseUint(gidPart, 10, 32)
+		if nerr != nil {
+			g, gerr := user.LookupGroup(gidPart)
+			if gerr != nil {
+				return nil, fmt.Errorf("unknown group %q", gidPart)
+			}
+			gid, nerr = strconv.ParseUint(g.Gid, 10, 32)
+			if nerr != nil {
+				return nil, fmt.Errorf("non-numeric gid for group %q", gidPart)
+			}
+		}
+		gu.gid = uint32(gid)
+	}
+
+	return gu, nil
+}
+
+// lookupShell returns the login shell of a user from /etc/passwd, which
+// os/user does not expose.
+func lookupShell(username string) string {
+	data, err := os.ReadFile("/etc/passwd")
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Split(line, ":")
+		if len(fields) >= 7 && fields[0] == username {
+			return fields[6]
+		}
+	}
+	return ""
+}
+
 // open starts the requested process on the given stream.
 func (c *connState) open(stream uint32, req agentproto.OpenRequest) error {
 	if len(req.Argv) == 0 {
@@ -301,10 +397,26 @@ func (c *connState) open(stream uint32, req agentproto.OpenRequest) error {
 		return fmt.Errorf("stream %d already in use", stream)
 	}
 
-	log.Printf("open stream %d: argv=%v tty=%v", stream, req.Argv, req.TTY)
+	gu, err := resolveUser(req.User)
+	if err != nil {
+		return err
+	}
+
+	log.Printf("open stream %d: argv=%v tty=%v user=%q", stream, req.Argv, req.TTY, req.User)
 	cmd := exec.Command(req.Argv[0], req.Argv[1:]...)
-	cmd.Env = defaultEnv(req.Env)
+	cmd.Env = defaultEnv(req.Env, gu)
 	cmd.Dir = req.Cwd
+	cmd.SysProcAttr = &syscall.SysProcAttr{}
+	if gu != nil {
+		cmd.SysProcAttr.Credential = &syscall.Credential{
+			Uid:    gu.uid,
+			Gid:    gu.gid,
+			Groups: gu.groups,
+		}
+		if cmd.Dir == "" {
+			cmd.Dir = gu.home
+		}
+	}
 	if cmd.Dir == "" {
 		cmd.Dir = "/"
 	}
@@ -315,10 +427,30 @@ func (c *connState) open(stream uint32, req agentproto.OpenRequest) error {
 		if ws.Rows == 0 || ws.Cols == 0 {
 			ws.Rows, ws.Cols = 24, 80
 		}
-		ptmx, err := pty.StartWithSize(cmd, ws)
+		// Open the pair ourselves (rather than pty.StartWithSize) so the
+		// slave can be handed to the dropped-privilege child: chown it to
+		// the target user, like login(1), so programs that reopen their
+		// own /dev/pts/N keep working.
+		ptmx, tts, err := pty.Open()
 		if err != nil {
+			return fmt.Errorf("open pty: %w", err)
+		}
+		if gu != nil {
+			if cherr := os.Chown(tts.Name(), int(gu.uid), int(gu.gid)); cherr != nil {
+				log.Printf("chown %s: %v", tts.Name(), cherr)
+			}
+		}
+		_ = pty.Setsize(ptmx, ws)
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = tts, tts, tts
+		cmd.SysProcAttr.Setsid = true
+		cmd.SysProcAttr.Setctty = true
+		cmd.SysProcAttr.Ctty = 0
+		if err := cmd.Start(); err != nil {
+			_ = ptmx.Close()
+			_ = tts.Close()
 			return fmt.Errorf("start (tty): %w", err)
 		}
+		_ = tts.Close()
 		s.ptmx = ptmx
 		go func() {
 			buf := make([]byte, 32*1024)
@@ -395,22 +527,36 @@ func (c *connState) open(stream uint32, req agentproto.OpenRequest) error {
 	return nil
 }
 
-// defaultEnv fills in PATH and TERM when the request does not carry them.
-func defaultEnv(env []string) []string {
-	hasPath, hasTerm := false, false
-	for _, e := range env {
-		if strings.HasPrefix(e, "PATH=") {
-			hasPath = true
+// defaultEnv fills in PATH, TERM and — when running as a resolved user —
+// the login-style identity variables, unless the request carries them.
+func defaultEnv(env []string, gu *guestUser) []string {
+	has := func(key string) bool {
+		for _, e := range env {
+			if strings.HasPrefix(e, key+"=") {
+				return true
+			}
 		}
-		if strings.HasPrefix(e, "TERM=") {
-			hasTerm = true
-		}
+		return false
 	}
-	if !hasPath {
+	if !has("PATH") {
 		env = append(env, "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
 	}
-	if !hasTerm {
+	if !has("TERM") {
 		env = append(env, "TERM=xterm-256color")
+	}
+	if gu != nil {
+		if !has("HOME") {
+			env = append(env, "HOME="+gu.home)
+		}
+		if !has("USER") {
+			env = append(env, "USER="+gu.name)
+		}
+		if !has("LOGNAME") {
+			env = append(env, "LOGNAME="+gu.name)
+		}
+		if !has("SHELL") {
+			env = append(env, "SHELL="+gu.shell)
+		}
 	}
 	return env
 }

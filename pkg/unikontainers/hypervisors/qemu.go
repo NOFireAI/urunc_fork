@@ -119,6 +119,17 @@ func (q *Qemu) BuildExecCmd(args types.ExecArgs, ukernel types.Unikernel) ([]str
 		cmdString += " -serial stdio"
 	}
 
+	// Agent transport: a virtio-serial port bridged to a host unix socket,
+	// where urunit-agent serves exec sessions. Used on hosts without
+	// vhost-vsock (macOS). The guest resolves the port name via sysfs.
+	if args.AgentSockPath != "" {
+		if !strings.Contains(cmdString, "-device virtio-serial-pci") {
+			cmdString += " -device virtio-serial-pci"
+		}
+		cmdString += " -chardev socket,id=uragent0,path=" + args.AgentSockPath + ",server=on,wait=off"
+		cmdString += " -device virtserialport,chardev=uragent0,name=io.urunc.agent.0"
+	}
+
 	if args.VCPUs > 0 {
 		cmdString += fmt.Sprintf(" -smp %d", args.VCPUs)
 	}

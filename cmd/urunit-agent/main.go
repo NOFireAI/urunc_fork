@@ -49,6 +49,13 @@ func main() {
 	log.SetPrefix("urunit-agent: ")
 	log.SetFlags(0)
 
+	// The agent starts early during guest boot with a near-empty
+	// environment. exec.Command resolves bare command names against the
+	// agent's own PATH, so give it a sane default.
+	if os.Getenv("PATH") == "" {
+		_ = os.Setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+	}
+
 	// The agent may start before init mounts the special filesystems;
 	// make sure sysfs is there for transport discovery.
 	if !exists("/sys/class") {

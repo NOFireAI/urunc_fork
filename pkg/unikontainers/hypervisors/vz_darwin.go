@@ -100,6 +100,15 @@ func (v *VzDarwin) BuildExecCmd(args types.ExecArgs, ukernel types.Unikernel) ([
 		cmdArgs = append(cmdArgs, "--agent-sock", args.AgentSockPath)
 	}
 
+	// Graphics window: vz-runner attaches a VZVirtioGraphicsDevice and hosts
+	// the VM in an NSWindow. Vz-only; the QEMU darwin builder never emits this.
+	if args.GUI {
+		cmdArgs = append(cmdArgs, "--gui")
+		if args.GUITitle != "" {
+			cmdArgs = append(cmdArgs, "--gui-title", args.GUITitle)
+		}
+	}
+
 	return cmdArgs, nil
 }
 

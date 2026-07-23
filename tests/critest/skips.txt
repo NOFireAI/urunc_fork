@@ -1,0 +1,19 @@
+# critest specs we skip for the urunc runtime handler, one ginkgo regex per line.
+# Every entry needs a one-line reason. Retire entries as features land.
+#
+# Baseline: critest v1.36.0 [Conformance] against containerd 2.3.3 + urunc,
+# 41/50 specs pass. All 9 failures share a single root cause: the shim does
+# not support exec for runc-delegated containers yet
+# ("failed to exec in container: failed to start exec").
+
+# exec is not supported by the urunc shim yet
+runtime should support exec with tty=false and stdin=false
+runtime should support exec with tty=true and stdin=true
+runtime should support execSync
+should support container exec
+
+# these pass their setup but verify the result via execSync, so they fail
+# for the same reason as above
+runtime should support starting container with volume
+runtime should support DNS config
+runtime should support set hostname

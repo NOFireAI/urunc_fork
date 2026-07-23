@@ -5,10 +5,18 @@ To validate urunc's CRI surface against something upstream, we run
 against containerd with `--runtime-handler=urunc`. The workflow lives in
 `.github/workflows/critest.yml`.
 
-critest drives generic Linux images. Under the urunc handler these hit the
-runc-delegation path, not the unikernel path. This is exactly the plumbing
-Kubernetes exercises for the sandbox and sidecar containers -- unikernel
-behavior is covered by the e2e suite in `tests/e2e`.
+The workflow runs critest twice:
+
+1. **Full suite, generic images.** These hit the runc-delegation path, not
+   the VM path. This is exactly the plumbing Kubernetes exercises for the
+   sandbox and sidecar containers of every urunc pod.
+2. **VM path.** Via `--test-images-file` we swap critest's web server image
+   for `nginx-qemu-linux-raw` (a Linux nginx guest for qemu), so the two
+   port-mapping specs boot a real guest VM through CRI and curl the nginx
+   inside it. This needs the devmapper snapshotter (block rootfs), hence the
+   separate `urunc-devmapper` handler in the containerd config.
+
+Unikernel behavior beyond that is covered by the e2e suite in `tests/e2e`.
 
 There is no official CRI conformance badge. The ecosystem norm is
 "passes critest vX.Y with documented skips" -- for reference, Kata runs an

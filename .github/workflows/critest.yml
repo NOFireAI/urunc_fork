@@ -98,7 +98,7 @@ jobs:
         # apparmor provides apparmor_parser, needed by the critest AppArmor
         # specs; it must be present before containerd starts, as containerd
         # probes AppArmor support once at startup.
-        sudo apt-get install -y git wget build-essential libseccomp-dev pkg-config bc make apparmor
+        sudo apt-get install -y git wget build-essential libseccomp-dev pkg-config bc make apparmor qemu-system-x86
 
     - name: Install runc
       env:
@@ -164,15 +164,33 @@ jobs:
         syslog = true
         EOT
 
-    - name: Configure containerd with the urunc runtime handler
+    - name: Configure containerd with the urunc runtime handlers
       run: |
+        sudo mkdir -p /usr/local/bin/scripts
+        sudo cp script/dm_create.sh /usr/local/bin/scripts/dm_create.sh
+        sudo chmod 755 /usr/local/bin/scripts/dm_create.sh
+        sudo /usr/local/bin/scripts/dm_create.sh
         sudo mkdir -p /etc/containerd/
         sudo containerd config default | sudo tee /etc/containerd/config.toml > /dev/null
+        sudo sed -i "/\[plugins\.'io\.containerd\.snapshotter\.v1\.devmapper'\]/,/^$/d" /etc/containerd/config.toml
+        # Two handlers: "urunc" (default snapshotter) exercises the full
+        # generic suite on the runc-delegation path, "urunc-devmapper"
+        # provides the block rootfs the guest VM images need.
         sudo tee -a /etc/containerd/config.toml > /dev/null <<'EOT'
+        [plugins.'io.containerd.snapshotter.v1.devmapper']
+          pool_name = "containerd-pool"
+          root_path = "/var/lib/containerd/io.containerd.snapshotter.v1.devmapper"
+          base_image_size = "10GB"
+          fs_type = "ext2"
         [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.urunc]
             runtime_type = "io.containerd.urunc.v2"
             container_annotations = ["com.urunc.unikernel.*"]
             pod_annotations = ["com.urunc.unikernel.*"]
+        [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.urunc-devmapper]
+            runtime_type = "io.containerd.urunc.v2"
+            container_annotations = ["com.urunc.unikernel.*"]
+            pod_annotations = ["com.urunc.unikernel.*"]
+            snapshotter = "devmapper"
         EOT
         sudo systemctl restart containerd
         sleep 3
@@ -203,6 +221,22 @@ jobs:
           "${SKIP_ARGS[@]}" \
           --ginkgo.junit-report "$PWD/critest-report/junit.xml" \
           --ginkgo.timeout 40m
+
+    - name: Run critest against the urunc VM path (qemu Linux guest)
+      run: |
+        # The web-server specs boot a real guest VM: critest's web server
+        # image is swapped for urunc's qemu Linux nginx image, so the
+        # port-mapping specs curl an nginx served from inside the guest.
+        tee /tmp/urunc-test-images.yaml > /dev/null <<'EOT'
+        webServerTestImage: harbor.nbfc.io/nubificus/urunc/nginx-qemu-linux-raw:latest
+        EOT
+        sudo /usr/local/bin/critest \
+          --runtime-endpoint unix:///run/containerd/containerd.sock \
+          --runtime-handler urunc-devmapper \
+          --test-images-file /tmp/urunc-test-images.yaml \
+          --ginkgo.focus='port mapping' \
+          --ginkgo.junit-report "$PWD/critest-report/junit-vmpath.xml" \
+          --ginkgo.timeout 20m
 
     - name: Upload critest report
       if: always()

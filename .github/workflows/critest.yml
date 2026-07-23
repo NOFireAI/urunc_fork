@@ -1,5 +1,9 @@
 name: CRI validation (critest)
 on:
+  # temporary trigger to verify the workflow on the feature branch;
+  # drop before merging (dispatch works once the file is on main)
+  push:
+    branches: ["feat/critest"]
   workflow_call:
     inputs:
       ref:

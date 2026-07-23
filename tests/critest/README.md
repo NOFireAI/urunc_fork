@@ -32,6 +32,7 @@ sudo critest \
   --ginkgo.skip="$(grep -vE '^\s*(#|$)' skips.txt | paste -sd'|' -)"
 ```
 
-Baseline (2026-07-23, critest v1.36.0, containerd 2.3.3): 41/50 Conformance
-specs pass; all 9 failures trace to exec not being supported by the shim for
-runc-delegated containers.
+Baseline (2026-07-23, critest v1.36.0, containerd 2.3.3): 50/50 Conformance
+specs pass with no skips. Before the exec delegation patch (feat: Add exec
+command with runc delegation) the score was 41/50, with all 9 failures
+tracing to exec not being supported for runc-delegated containers.

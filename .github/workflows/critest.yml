@@ -189,12 +189,16 @@ jobs:
         # Skips are maintained in tests/critest/skips.txt, one regex per line.
         SKIP_REGEX=$(grep -vE '^\s*(#|$)' tests/critest/skips.txt | paste -sd'|' -)
         echo "Skip regex: ${SKIP_REGEX}"
+        SKIP_ARGS=()
+        if [ -n "${SKIP_REGEX}" ]; then
+          SKIP_ARGS=(--ginkgo.skip="${SKIP_REGEX}")
+        fi
         mkdir -p critest-report
         sudo /usr/local/bin/critest \
           --runtime-endpoint unix:///run/containerd/containerd.sock \
           --runtime-handler urunc \
           --ginkgo.focus='\[Conformance\]' \
-          --ginkgo.skip="${SKIP_REGEX}" \
+          "${SKIP_ARGS[@]}" \
           --ginkgo.junit-report "$PWD/critest-report/junit.xml" \
           --ginkgo.timeout 40m
 

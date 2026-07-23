@@ -95,7 +95,10 @@ jobs:
     - name: Install base dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y git wget build-essential libseccomp-dev pkg-config bc make
+        # apparmor provides apparmor_parser, needed by the critest AppArmor
+        # specs; it must be present before containerd starts, as containerd
+        # probes AppArmor support once at startup.
+        sudo apt-get install -y git wget build-essential libseccomp-dev pkg-config bc make apparmor
 
     - name: Install runc
       env:
@@ -197,7 +200,6 @@ jobs:
         sudo /usr/local/bin/critest \
           --runtime-endpoint unix:///run/containerd/containerd.sock \
           --runtime-handler urunc \
-          --ginkgo.focus='\[Conformance\]' \
           "${SKIP_ARGS[@]}" \
           --ginkgo.junit-report "$PWD/critest-report/junit.xml" \
           --ginkgo.timeout 40m

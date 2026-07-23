@@ -32,7 +32,13 @@ sudo critest \
   --ginkgo.skip="$(grep -vE '^\s*(#|$)' skips.txt | paste -sd'|' -)"
 ```
 
-Baseline (2026-07-23, critest v1.36.0, containerd 2.3.3): 50/50 Conformance
-specs pass with no skips. Before the exec delegation patch (feat: Add exec
-command with runc delegation) the score was 41/50, with all 9 failures
-tracing to exec not being supported for runc-delegated containers.
+Baseline (2026-07-23, critest v1.36.0, containerd 2.3.3): the full validation
+suite passes -- 107/107 specs, 0 failures, no skip list. The remaining 15
+specs auto-skip as host/feature-gated (SELinux needs an enforcing host, NRI
+needs the socket enabled, image-volume and user-namespaces are feature-gated).
+
+Before the exec delegation patch (feat: Add exec command with runc
+delegation) the score was 41/50 on the [Conformance] subset, with all 9
+failures tracing to exec not being supported for runc-delegated containers.
+Note that the AppArmor specs need apparmor_parser installed before containerd
+starts, as containerd probes AppArmor support once at startup.

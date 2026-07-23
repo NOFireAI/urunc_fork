@@ -111,6 +111,7 @@ func main() {
 		Commands: []*cli.Command{
 			createCommand,
 			deleteCommand,
+			execCommand,
 			killCommand,
 			runCommand,
 			psCommand,

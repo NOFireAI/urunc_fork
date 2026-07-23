@@ -195,7 +195,7 @@ jobs:
           --runtime-handler urunc \
           --ginkgo.focus='\[Conformance\]' \
           --ginkgo.skip="${SKIP_REGEX}" \
-          --report-dir "$PWD/critest-report" \
+          --ginkgo.junit-report "$PWD/critest-report/junit.xml" \
           --ginkgo.timeout 40m
 
     - name: Upload critest report

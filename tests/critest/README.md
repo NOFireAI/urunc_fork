@@ -44,10 +44,20 @@ sudo critest \
 
 Baselines (critest v1.36.0, containerd 2.3.3). Generic images, 2026-07-23:
 the full validation suite passes -- 107/107 specs, 0 failures, no skip list.
-Real guest VMs, 2026-07-25: 45 of 49 [Conformance] specs pass, with the five
-entries in `skips-vmpath.txt` accounting for the rest. The remaining 15
-specs auto-skip as host/feature-gated (SELinux needs an enforcing host, NRI
-needs the socket enabled, image-volume and user-namespaces are feature-gated).
+The remaining 15 specs auto-skip as host/feature-gated (SELinux needs an
+enforcing host, NRI needs the socket enabled, image-volume and
+user-namespaces are feature-gated). Real guest VMs, 2026-07-25: 45 of 49
+[Conformance] specs pass, with the five entries in `skips-vmpath.txt`
+accounting for the rest.
+
+The VM-path run allows ginkgo flake attempts, which the generic run does not.
+Exec reaches a guest through a detached proxy that bridges the shim's exec IO
+to the guest agent, and that handover is not yet airtight: a command's output
+occasionally goes missing, more often on slower machines. Driving urunc
+directly is reliable, so the fault is on the containerd side of the proxy, in
+how the exec IO is torn down when the proxy exits. The retries keep the specs
+running -- and keep reporting -- until that is fixed; they are not a licence
+to leave it broken.
 
 Before the exec delegation patch (feat: Add exec command with runc
 delegation) the score was 41/50 on the [Conformance] subset, with all 9

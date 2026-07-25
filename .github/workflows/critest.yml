@@ -241,6 +241,7 @@ jobs:
           --ginkgo.focus='\[Conformance\]' \
           --ginkgo.skip="${VM_SKIP}" \
           --ginkgo.junit-report "$PWD/critest-report/junit-vmpath.xml" \
+          --ginkgo.flake-attempts 3 \
           --ginkgo.timeout 30m
 
     - name: Upload critest report

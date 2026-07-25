@@ -90,6 +90,7 @@ type UnikernelParams struct {
 	Block      []BlockDevParams
 	Rootfs     RootfsParams  // Information about rootfs
 	ProcConf   ProcessConfig // Information for the process execution inside the guest
+	Hostname   string        // The hostname of the guest
 }
 
 // ExecArgs holds the data required by Execve to start the VMM
@@ -106,6 +107,7 @@ type ExecArgs struct {
 	VAccelType    string   // Specifies the vAccel acceleration type(e.g. vsock). When empty, vAccel is disabled
 	VSockDevPath  string   // The host directory where the fc unix socket is created
 	VSockDevID    int      // The guest-cid
+	AgentSockPath string   // Host unix socket bridged to the in-guest urunit-agent
 	Net           NetDevParams
 	Sharedfs      SharedfsParams
 }

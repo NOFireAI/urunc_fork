@@ -444,9 +444,24 @@ func (u *Unikontainer) Exec(metrics m.Writer) error {
 		Monitor:  vmmType,
 		Version:  unikernelVersion,
 		ProcConf: procAttrs,
+		Hostname: u.guestHostname(),
 	}
 	if len(unikernelParams.CmdLine) == 0 {
 		unikernelParams.CmdLine = strings.Fields(u.State.Annotations[annotCmdLine])
+	} else {
+		// If the image designates urunit as the guest init (optionally
+		// behind an agent launcher), keep that prefix even when the
+		// container overrides the command (eg. CRI test suites): the
+		// user command becomes urunit's payload.
+		imageCmd := strings.Fields(u.State.Annotations[annotCmdLine])
+		if len(imageCmd) > 0 && strings.Contains(imageCmd[0], "urunit") &&
+			!strings.Contains(unikernelParams.CmdLine[0], "urunit") {
+			prefix := imageCmd[:1]
+			if len(imageCmd) > 1 && strings.HasSuffix(imageCmd[1], "agent-init.sh") {
+				prefix = imageCmd[:2]
+			}
+			unikernelParams.CmdLine = append(append([]string{}, prefix...), unikernelParams.CmdLine...)
+		}
 	}
 
 	// handle network
@@ -496,6 +511,17 @@ func (u *Unikontainer) Exec(metrics m.Writer) error {
 		"rootfs_path": rootfsParams.Path,
 		"mon_rootfs":  rootfsParams.MonRootfs,
 	}).Debug("guest rootfs params")
+
+	// Host side of the urunit-agent exec transport: the monitor binds the
+	// socket after pivoting into MonRootfs, so it gets the post-pivot path,
+	// while a host-side symlink under the state dir lets urunc exec find it.
+	vmmArgs.AgentSockPath = "/agent.sock"
+	hostAgentSock := filepath.Join(rootfsParams.MonRootfs, "agent.sock")
+	agentSockLink := filepath.Join(u.BaseDir, "agent.sock")
+	_ = os.Remove(agentSockLink)
+	if err := os.Symlink(hostAgentSock, agentSockLink); err != nil {
+		uniklog.WithError(err).Warn("failed to link agent socket; exec into the guest will not work")
+	}
 
 	// TODO: Add support for using both an existing
 	// block based snapshot of the container's rootfs
@@ -1345,4 +1371,26 @@ func (u Unikontainer) getNetworkType() string {
 		return "static"
 	}
 	return "dynamic"
+}
+
+// guestHostname returns the hostname the guest should boot with. The
+// container spec carries one only when the runtime is expected to create a
+// UTS namespace; a VM has its own, so the sandbox's hostname reaches us the
+// same way it reaches a normal container: as the /etc/hostname bind mount.
+func (u *Unikontainer) guestHostname() string {
+	if u.Spec.Hostname != "" {
+		return u.Spec.Hostname
+	}
+	for _, m := range u.Spec.Mounts {
+		if m.Destination != "/etc/hostname" {
+			continue
+		}
+		data, err := os.ReadFile(m.Source)
+		if err != nil {
+			uniklog.WithError(err).Debug("could not read the mounted hostname file")
+			return ""
+		}
+		return strings.TrimSpace(string(data))
+	}
+	return ""
 }

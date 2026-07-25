@@ -10,11 +10,13 @@ The workflow runs critest twice:
 1. **Full suite, generic images.** These hit the runc-delegation path, not
    the VM path. This is exactly the plumbing Kubernetes exercises for the
    sandbox and sidecar containers of every urunc pod.
-2. **VM path.** Via `--test-images-file` we swap critest's web server image
-   for `nginx-qemu-linux-raw` (a Linux nginx guest for qemu), so the two
-   port-mapping specs boot a real guest VM through CRI and curl the nginx
-   inside it. This needs the devmapper snapshotter (block rootfs), hence the
-   separate `urunc-devmapper` handler in the containerd config.
+2. **VM path.** Via `--test-images-file` we swap critest's images for urunc
+   guest images (`busybox-agent-qemu-linux-raw` and
+   `nginx-qemu-linux-raw`), so every spec boots a real guest VM. exec
+   reaches those guests through the urunit-agent transport. This needs the
+   devmapper snapshotter (block rootfs), hence the separate
+   `urunc-devmapper` handler in the containerd config, and its skips live in
+   `skips-vmpath.txt`.
 
 Unikernel behavior beyond that is covered by the e2e suite in `tests/e2e`.
 
@@ -40,8 +42,10 @@ sudo critest \
   --ginkgo.skip="$(grep -vE '^\s*(#|$)' skips.txt | paste -sd'|' -)"
 ```
 
-Baseline (2026-07-23, critest v1.36.0, containerd 2.3.3): the full validation
-suite passes -- 107/107 specs, 0 failures, no skip list. The remaining 15
+Baselines (critest v1.36.0, containerd 2.3.3). Generic images, 2026-07-23:
+the full validation suite passes -- 107/107 specs, 0 failures, no skip list.
+Real guest VMs, 2026-07-25: 45 of 49 [Conformance] specs pass, with the five
+entries in `skips-vmpath.txt` accounting for the rest. The remaining 15
 specs auto-skip as host/feature-gated (SELinux needs an enforcing host, NRI
 needs the socket enabled, image-volume and user-namespaces are feature-gated).
 

@@ -222,21 +222,26 @@ jobs:
           --ginkgo.junit-report "$PWD/critest-report/junit.xml" \
           --ginkgo.timeout 40m
 
-    - name: Run critest against the urunc VM path (qemu Linux guest)
+    - name: Run critest against the urunc VM path (real guest VMs)
       run: |
-        # The web-server specs boot a real guest VM: critest's web server
-        # image is swapped for urunc's qemu Linux nginx image, so the
-        # port-mapping specs curl an nginx served from inside the guest.
+        # Every spec here boots a real guest: critest's images are swapped
+        # for urunc guest images, so the conformance suite exercises the VM
+        # path end to end -- including exec, which reaches the guest through
+        # the urunit-agent transport.
         tee /tmp/urunc-test-images.yaml > /dev/null <<'EOT'
+        defaultTestContainerImage: harbor.nbfc.io/nubificus/urunc/busybox-agent-qemu-linux-raw:latest
         webServerTestImage: harbor.nbfc.io/nubificus/urunc/nginx-qemu-linux-raw:latest
         EOT
+        VM_SKIP=$(grep -vE '^\s*(#|$)' tests/critest/skips-vmpath.txt | paste -sd'|' -)
+        echo "VM path skip regex: ${VM_SKIP}"
         sudo /usr/local/bin/critest \
           --runtime-endpoint unix:///run/containerd/containerd.sock \
           --runtime-handler urunc-devmapper \
           --test-images-file /tmp/urunc-test-images.yaml \
-          --ginkgo.focus='port mapping' \
+          --ginkgo.focus='\[Conformance\]' \
+          --ginkgo.skip="${VM_SKIP}" \
           --ginkgo.junit-report "$PWD/critest-report/junit-vmpath.xml" \
-          --ginkgo.timeout 20m
+          --ginkgo.timeout 30m
 
     - name: Upload critest report
       if: always()

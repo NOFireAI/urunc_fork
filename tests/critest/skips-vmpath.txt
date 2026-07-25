@@ -1,0 +1,27 @@
+# critest specs we skip when the suite runs against real urunc guest VMs,
+# one ginkgo regex per line. Every entry needs a one-line reason.
+#
+# Baseline (2026-07-25, critest v1.36.0, containerd 2.3.3, qemu guests):
+# 45 of 49 [Conformance] specs pass with these skips.
+#
+# This list is deliberately separate from skips.txt: the generic run has an
+# empty skip list, and these entries are about the VM path only.
+
+# attach reaches the guest console, not the exec agent, and currently hangs
+# waiting for output instead of failing
+runtime should support attach
+
+# an interactive exec allocates a pty on both sides (host console socket and
+# guest); the guest side works, the handover to the streaming server does not
+runtime should support exec with tty=true and stdin=true
+
+# containerd kills the exec process when the timeout expires, which leaves
+# the guest-side process running: the agent needs to reap it
+runtime should support execSync with timeout
+
+# port forwarding dials localhost inside the pod network namespace, where the
+# guest is not listening: it has its own address behind the tap device
+runtime should support portforward
+
+# same reason: the spec reaches the sandbox through the pod namespace
+should support network

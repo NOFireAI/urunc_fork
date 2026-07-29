@@ -47,6 +47,7 @@ type Linux struct {
 	Command    string
 	Monitor    string
 	Env        []string
+	Hostname   string
 	Net        LinuxNet
 	Blk        []types.BlockDevParams
 	RootFsType string
@@ -108,10 +109,15 @@ func (l *Linux) CommandString() (string, error) {
 		bootParams += " " + rootParams
 	}
 	if l.Net.Address != "" {
-		netParams := fmt.Sprintf("ip=%s::%s:%s:urunc:eth0:off",
+		guestHostname := l.Hostname
+		if guestHostname == "" {
+			guestHostname = "urunc"
+		}
+		netParams := fmt.Sprintf("ip=%s::%s:%s:%s:eth0:off",
 			l.Net.Address,
 			l.Net.Gateway,
-			l.Net.Mask)
+			l.Net.Mask,
+			guestHostname)
 		bootParams += " " + netParams
 	}
 	if !l.InitrdConf {
@@ -236,6 +242,7 @@ func (l *Linux) Init(data types.UnikernelParams) error {
 	l.Env = data.EnvVars
 	l.Monitor = data.Monitor
 	l.ProcConfig = data.ProcConf
+	l.Hostname = data.Hostname
 
 	// if the application contains urunit, then we assume
 	// that the init process is based on our urunit

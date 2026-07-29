@@ -161,7 +161,13 @@ func copyMountfiles(targetPath string, mounts []specs.Mount) error {
 			continue
 		}
 		err := fileFromHost(targetPath, m.Source, m.Destination, 0, true)
-		if (err != nil) && !errors.Is(err, ErrCopyDir) {
+		if errors.Is(err, ErrCopyDir) {
+			// Directory volumes have no in-guest equivalent of a bind
+			// mount, so seed the guest with a copy of their contents.
+			// Writes inside the guest stay in the guest.
+			err = copyDirInto(m.Source, filepath.Join(targetPath, m.Destination))
+		}
+		if err != nil {
 			return err
 		}
 	}

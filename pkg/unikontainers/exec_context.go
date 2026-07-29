@@ -152,9 +152,24 @@ func buildExecContext(spec *specs.Spec, annot map[string]string, containerID, bu
 		Monitor:  monitorFamily(vmmType),
 		Version:  unikernelVersion,
 		ProcConf: procAttrs,
+		Hostname: guestHostnameFromSpec(spec),
 	}
 	if len(unikernelParams.CmdLine) == 0 {
 		unikernelParams.CmdLine = strings.Fields(annot[annotCmdLine])
+	} else {
+		// If the image designates urunit as the guest init (optionally
+		// behind an agent launcher), keep that prefix even when the
+		// container overrides the command (eg. CRI test suites): the
+		// user command becomes urunit's payload.
+		imageCmd := strings.Fields(annot[annotCmdLine])
+		if len(imageCmd) > 0 && strings.Contains(imageCmd[0], "urunit") &&
+			!strings.Contains(unikernelParams.CmdLine[0], "urunit") {
+			prefix := imageCmd[:1]
+			if len(imageCmd) > 1 && strings.HasSuffix(imageCmd[1], "agent-init.sh") {
+				prefix = imageCmd[:2]
+			}
+			unikernelParams.CmdLine = append(append([]string{}, prefix...), unikernelParams.CmdLine...)
+		}
 	}
 
 	return &execContext{
@@ -244,4 +259,27 @@ func PrepareExec(spec *specs.Spec, bundle, containerID string, cfg *UruncConfig)
 		UnikernelPath:   ec.UnikernelPath,
 		InitrdPath:      ec.InitrdPath,
 	}, nil
+}
+
+// guestHostnameFromSpec is guestHostname for callers that hold only the OCI
+// spec (buildExecContext, shared with the darwin runner).
+func guestHostnameFromSpec(spec *specs.Spec) string {
+	if spec == nil {
+		return ""
+	}
+	if spec.Hostname != "" {
+		return spec.Hostname
+	}
+	for _, m := range spec.Mounts {
+		if m.Destination != "/etc/hostname" {
+			continue
+		}
+		data, err := os.ReadFile(m.Source)
+		if err != nil {
+			uniklog.WithError(err).Debug("could not read the mounted hostname file")
+			return ""
+		}
+		return strings.TrimSpace(string(data))
+	}
+	return ""
 }

@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -278,4 +279,38 @@ func executeHook(hook specs.Hook, state []byte) error {
 	}
 
 	return nil
+}
+
+// copyDirInto replicates the contents of a host directory into the guest
+// rootfs. Directory volumes cannot be bind mounted into a VM, so the guest
+// gets a copy: it sees the data that was there at boot, and anything it
+// writes stays inside the guest.
+func copyDirInto(source string, target string) error {
+	return filepath.WalkDir(source, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		dst := filepath.Join(target, rel)
+		switch {
+		case d.IsDir():
+			info, err := d.Info()
+			if err != nil {
+				return err
+			}
+			return os.MkdirAll(dst, info.Mode().Perm())
+		case d.Type()&fs.ModeSymlink != 0:
+			link, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			_ = os.Remove(dst)
+			return os.Symlink(link, dst)
+		default:
+			return copyFile(path, dst)
+		}
+	})
 }

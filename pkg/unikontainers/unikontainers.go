@@ -361,6 +361,17 @@ func (u *Unikontainer) Exec(metrics m.Writer) error {
 		"mon_rootfs":  rootfsParams.MonRootfs,
 	}).Debug("guest rootfs params")
 
+	// Host side of the urunit-agent exec transport: the monitor binds the
+	// socket after pivoting into MonRootfs, so it gets the post-pivot path,
+	// while a host-side symlink under the state dir lets urunc exec find it.
+	vmmArgs.AgentSockPath = "/agent.sock"
+	hostAgentSock := filepath.Join(rootfsParams.MonRootfs, "agent.sock")
+	agentSockLink := filepath.Join(u.BaseDir, "agent.sock")
+	_ = os.Remove(agentSockLink)
+	if err := os.Symlink(hostAgentSock, agentSockLink); err != nil {
+		uniklog.WithError(err).Warn("failed to link agent socket; exec into the guest will not work")
+	}
+
 	// TODO: Add support for using both an existing
 	// block based snapshot of the container's rootfs
 	// and an auxiliary block image placed in the container's image
@@ -1184,4 +1195,12 @@ func (u Unikontainer) getNetworkType() string {
 		return "static"
 	}
 	return "dynamic"
+}
+
+// guestHostname returns the hostname the guest should boot with. The
+// container spec carries one only when the runtime is expected to create a
+// UTS namespace; a VM has its own, so the sandbox's hostname reaches us the
+// same way it reaches a normal container: as the /etc/hostname bind mount.
+func (u *Unikontainer) guestHostname() string {
+	return guestHostnameFromSpec(u.Spec)
 }

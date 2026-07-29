@@ -397,6 +397,10 @@ func (c *connState) open(stream uint32, req agentproto.OpenRequest) error {
 		return fmt.Errorf("stream %d already in use", stream)
 	}
 
+	// The exit frame must not overtake the output of the process: the
+	// client stops reading as soon as it sees the exit code.
+	var drained sync.WaitGroup
+
 	gu, err := resolveUser(req.User)
 	if err != nil {
 		return err
@@ -452,7 +456,9 @@ func (c *connState) open(stream uint32, req agentproto.OpenRequest) error {
 		}
 		_ = tts.Close()
 		s.ptmx = ptmx
+		drained.Add(1)
 		go func() {
+			defer drained.Done()
 			buf := make([]byte, 32*1024)
 			for {
 				n, err := ptmx.Read(buf)
@@ -484,6 +490,7 @@ func (c *connState) open(stream uint32, req agentproto.OpenRequest) error {
 		}
 		s.stdin = stdin
 		relay := func(r io.Reader, typ byte) {
+			defer drained.Done()
 			buf := make([]byte, 32*1024)
 			for {
 				n, err := r.Read(buf)
@@ -497,6 +504,7 @@ func (c *connState) open(stream uint32, req agentproto.OpenRequest) error {
 				}
 			}
 		}
+		drained.Add(2)
 		go relay(stdout, agentproto.TypeStdout)
 		go relay(stderr, agentproto.TypeStderr)
 	}
@@ -520,6 +528,7 @@ func (c *connState) open(stream uint32, req agentproto.OpenRequest) error {
 		if s.ptmx != nil {
 			_ = s.ptmx.Close()
 		}
+		drained.Wait()
 		c.removeSession(stream)
 		_ = c.writeJSON(agentproto.TypeExit, stream, agentproto.Exit{Code: code})
 	}()

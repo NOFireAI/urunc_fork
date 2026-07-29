@@ -101,6 +101,7 @@ type UnikernelParams struct {
 	Block      []BlockDevParams
 	Rootfs     RootfsParams  // Information about rootfs
 	ProcConf   ProcessConfig // Information for the process execution inside the guest
+	Hostname   string        // The hostname the guest should boot with (from the OCI spec or the sandbox's /etc/hostname mount)
 }
 
 // ExecArgs holds the data required by Execve to start the VMM

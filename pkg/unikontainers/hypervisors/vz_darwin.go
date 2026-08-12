@@ -84,9 +84,17 @@ func (v *VzDarwin) BuildExecCmd(args types.ExecArgs, ukernel types.Unikernel) ([
 		}
 	}
 
-	// Additional tagged shares (one --share per directory)
+	// Additional tagged shares (one --share per directory). A read-only share
+	// goes over --share-ro, a separate flag rather than a third positional, so
+	// the argument shape stays fixed and an older runner cannot mistake a mode
+	// for a tag. The root shares above stay read-write: the guest boots from
+	// them.
 	for _, dir := range args.SharedDirs {
-		cmdArgs = append(cmdArgs, "--share", dir.Path, dir.Tag)
+		flag := "--share"
+		if dir.ReadOnly {
+			flag = "--share-ro"
+		}
+		cmdArgs = append(cmdArgs, flag, dir.Path, dir.Tag)
 	}
 
 	// QMP socket for graceful shutdown control

@@ -49,6 +49,8 @@ if [ -b /dev/vda ]; then
     $BB mkdir -p /newroot/dev/pts /newroot/dev/shm
     $BB mount -t devpts -o gid=5,mode=0620,ptmxmode=0666 devpts /newroot/dev/pts 2>/dev/null
     $BB mount -t tmpfs -o mode=1777 shm /newroot/dev/shm 2>/dev/null
+    $BB mkdir -p /newroot/tmp
+    $BB chmod 1777 /newroot/tmp 2>/dev/null
     # Start the packaged static exec agent with the customer root already in
     # effect. The copy lives only in this container's writable filesystem.
     if [ -x /urunit-agent ]; then
@@ -76,6 +78,7 @@ if [ -b /dev/vda ]; then
       esac
       [ -s "$_s" ] && $BB cp "$_s" "/newroot/etc/$_f" 2>/dev/null
     done
+    $BB chmod 0644 /newroot/etc/resolv.conf /newroot/etc/hosts /newroot/etc/hostname 2>/dev/null
     # busybox switch_root execs the new init via execv (no PATH search), so a
     # bare entrypoint like "bash" must be resolved to an absolute path that
     # exists inside the customer rootfs before we hand off.

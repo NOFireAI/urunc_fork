@@ -69,6 +69,12 @@ $BB mount -t devtmpfs dev /newroot/dev 2>/dev/null
 $BB mkdir -p /newroot/dev/pts /newroot/dev/shm
 $BB mount -t devpts -o gid=5,mode=0620,ptmxmode=0666 devpts /newroot/dev/pts 2>/dev/null
 $BB mount -t tmpfs -o mode=1777 shm /newroot/dev/shm 2>/dev/null
+
+# OCI extraction onto a macOS-owned cache cannot reliably preserve Linux's
+# sticky bit (the cached /tmp commonly arrives as 0755). Container runtimes
+# normally supply a writable 01777 /tmp; recreate that contract in the overlay
+# before an unprivileged process such as `_apt` tries to create temporary files.
+$BB chmod 1777 /newroot/tmp 2>/dev/null
 if [ -s /urunc-resolv.conf ]; then
   $BB cp /urunc-resolv.conf /newroot/etc/resolv.conf 2>/dev/null
 elif [ -s /proc/net/pnp ]; then
@@ -76,6 +82,10 @@ elif [ -s /proc/net/pnp ]; then
 fi
 [ -s /urunc-hosts ] && $BB cp /urunc-hosts /newroot/etc/hosts 2>/dev/null
 [ -s /urunc-hostname ] && $BB cp /urunc-hostname /newroot/etc/hostname 2>/dev/null
+# Per-instance metadata is deliberately archived as root-only. These three
+# files become ordinary container identity files after installation and must
+# be readable by non-root workloads (APT drops network acquisition to `_apt`).
+$BB chmod 0644 /newroot/etc/resolv.conf /newroot/etc/hosts /newroot/etc/hostname 2>/dev/null
 
 # Additional virtiofs shares are encoded as:
 # tag<TAB>absolute-guest-path<TAB>ro|rw. They are mounted before the handoff so

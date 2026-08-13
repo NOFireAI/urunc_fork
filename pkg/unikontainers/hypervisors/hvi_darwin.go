@@ -19,7 +19,8 @@ const (
 // HviDarwin runs an arm64 Linux guest with Hypervisor.framework and HVI's
 // in-process virtio devices. Generic container boot exports the unpacked OCI
 // directory read-only through HVI's virtio-fs backend; the initrd supplies the
-// writable overlay.
+// writable overlay. Additional tagged directories retain their requested
+// read-only/read-write mode.
 type HviDarwin struct {
 	binaryPath string
 }
@@ -64,14 +65,15 @@ func (h *HviDarwin) BuildExecCmd(args types.ExecArgs, _ types.Unikernel) ([]stri
 		if path == "" || tag == "" {
 			return fmt.Errorf("hvi virtio-fs exports require a path and tag")
 		}
-		if !readOnly {
-			return fmt.Errorf("hvi currently supports only read-only virtio-fs exports")
-		}
 		if seenTags[tag] {
 			return fmt.Errorf("duplicate hvi virtio-fs tag %q", tag)
 		}
 		seenTags[tag] = true
-		cmd = append(cmd, "--share-ro", path, tag)
+		flag := "--share-rw"
+		if readOnly {
+			flag = "--share-ro"
+		}
+		cmd = append(cmd, flag, path, tag)
 		return nil
 	}
 	if args.Sharedfs.Path != "" {

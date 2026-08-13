@@ -25,7 +25,7 @@ func TestHviDarwinGenericContainerBoot(t *testing.T) {
 		},
 		SharedDirs: []types.SharedDirParams{
 			{Path: "/host/config", Tag: "share0", ReadOnly: true},
-			{Path: "/host/models", Tag: "share1", ReadOnly: true},
+			{Path: "/host/models", Tag: "share1"},
 		},
 	}
 	argv, err := hvi.BuildExecCmd(args, &fakeUnikernel{})
@@ -39,7 +39,7 @@ func TestHviDarwinGenericContainerBoot(t *testing.T) {
 		"--initramfs /instance/container-initrd",
 		"--share-ro /store/alpine/rootfs rootfs",
 		"--share-ro /host/config share0",
-		"--share-ro /host/models share1",
+		"--share-rw /host/models share1",
 		"--cmdline rdinit=/vz-init console=ttyAMA0",
 		"--agent-sock /instance/agent.sock",
 		"--net",
@@ -51,21 +51,27 @@ func TestHviDarwinGenericContainerBoot(t *testing.T) {
 	}
 }
 
-func TestHviDarwinRejectsWritableOrDuplicateShares(t *testing.T) {
+func TestHviDarwinWritableAndDuplicateShares(t *testing.T) {
 	hvi := NewHviDarwin("/opt/hvi")
-	_, err := hvi.BuildExecCmd(types.ExecArgs{
+	argv, err := hvi.BuildExecCmd(types.ExecArgs{
 		KernelPath: "/host/Image",
 		Sharedfs:   types.SharedfsParams{Path: "/host/rootfs"},
 	}, &fakeUnikernel{})
-	if err == nil || !strings.Contains(err.Error(), "read-only") {
-		t.Fatalf("writable export: got %v", err)
+	if err != nil {
+		t.Fatalf("writable export: %v", err)
 	}
-	_, err = hvi.BuildExecCmd(types.ExecArgs{
+	if got := strings.Join(argv, " "); !strings.Contains(got, "--share-rw /host/rootfs rootfs") {
+		t.Fatalf("writable root export missing from %s", got)
+	}
+	argv, err = hvi.BuildExecCmd(types.ExecArgs{
 		KernelPath: "/host/Image",
 		SharedDirs: []types.SharedDirParams{{Path: "/host/extra", Tag: "extra"}},
 	}, &fakeUnikernel{})
-	if err == nil || !strings.Contains(err.Error(), "read-only") {
-		t.Fatalf("writable additional export: got %v", err)
+	if err != nil {
+		t.Fatalf("writable additional export: %v", err)
+	}
+	if got := strings.Join(argv, " "); !strings.Contains(got, "--share-rw /host/extra extra") {
+		t.Fatalf("writable additional export missing from %s", got)
 	}
 	_, err = hvi.BuildExecCmd(types.ExecArgs{
 		KernelPath: "/host/Image",

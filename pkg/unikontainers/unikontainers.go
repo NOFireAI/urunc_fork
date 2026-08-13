@@ -330,15 +330,19 @@ func (u *Unikontainer) newRootfsBuilder(rootfsParams types.RootfsParams, unikern
 	switch rootfsParams.Type {
 	case "block":
 		return blockRootfs{
-			mounts:        u.Spec.Mounts,
-			monRootfs:     rootfsParams.MonRootfs,
-			mountedPath:   rootfsParams.MountedPath,
-			path:          rootfsParams.Path,
-			kernelPath:    unikernelPath,
-			initrdPath:    initrdPath,
-			uruncJSONPath: uruncJSONFilename,
-			guestType:     u.State.Annotations[annotType],
-			guest:         unikernel,
+			mounts:         u.Spec.Mounts,
+			monRootfs:      rootfsParams.MonRootfs,
+			mountedPath:    rootfsParams.MountedPath,
+			path:           rootfsParams.Path,
+			kernelPath:     unikernelPath,
+			initrdPath:     initrdPath,
+			uruncJSONPath:  uruncJSONFilename,
+			guestType:      u.State.Annotations[annotType],
+			guest:          unikernel,
+			bootKernelHost: u.Spec.Annotations[annotBootKernel],
+			bootInitrdHost: u.Spec.Annotations[annotBootInitrd],
+			containerCmd:   u.Spec.Process.Args,
+			containerEnv:   u.Spec.Process.Env,
 		}
 	case "initrd":
 		return initrdRootfs{
@@ -457,6 +461,12 @@ func (u *Unikontainer) Exec(metrics m.Writer) error {
 	}).Debug("guest rootfs params")
 
 	rfsBuilder := u.newRootfsBuilder(rootfsParams, unikernel, unikernelPath, initrdPath, vmmArgs.MemSizeB)
+	containerBoot := rootfsParams.Type == "block" &&
+		(u.Spec.Annotations[annotBootKernel] != "" || u.Spec.Annotations[annotBootInitrd] != "")
+	if containerBoot {
+		vmmArgs.InitrdPath = containerBootInitrdPath
+		unikernelParams.ContainerBoot = true
+	}
 	if rootfsParams.Type == "virtiofs" || rootfsParams.Type == "9pfs" {
 		// Update the paths of the files we need to pass in the monitor process.
 		vmmArgs.UnikernelPath = adjustPathsForSharedfs(vmmArgs.UnikernelPath)

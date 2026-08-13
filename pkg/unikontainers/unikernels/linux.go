@@ -40,6 +40,16 @@ const (
 	lpcEndMarker     string = "UCE" // Linux process config end marker
 	blkStartMarker   string = "UBS" // Block-based mounts start marker
 	blkEndMarker     string = "UBE" // Block-based mounts end marker
+
+	// vmiTelemMemmap carves the VMI telemetry export region out of the guest's
+	// usable memory map. The guest telem producer memremap()s this fixed region
+	// (PHYS_BASE/REGION_SIZE in vmi's telem_module.rs) and writes records into it
+	// unconditionally - it neither reserves it nor checks that it was reserved.
+	// Without this reservation the page allocator hands those pages to ordinary
+	// processes and the producer scribbles telemetry over them, which surfaces as
+	// non-deterministic SIGILL/SIGABRT in whichever process was unlucky enough to
+	// be allocated there. Base and size must match the kernel-side constants.
+	vmiTelemMemmap string = "memmap=64M$0x40000000"
 )
 
 type Linux struct {
@@ -52,6 +62,14 @@ type Linux struct {
 	RootFsType string
 	InitrdConf bool
 	ProcConfig types.ProcessConfig
+	// VMIInit, when true, makes /init (the injected VMI telemetry wrapper) the
+	// rdinit entrypoint; the original customer entrypoint is preserved as the
+	// argv passed after "--" so the wrapper can exec it unchanged.
+	VMIInit bool
+	// VMIIntrospect mirrors the introspection annotation. It gates the telemetry
+	// region reservation (vmiTelemMemmap), which is required for every rootfs
+	// type - not just the ones that boot the injected /init.
+	VMIIntrospect bool
 }
 
 type LinuxNet struct {
@@ -114,11 +132,19 @@ func (l *Linux) CommandString() (string, error) {
 			l.Net.Mask)
 		bootParams += " " + netParams
 	}
-	if !l.InitrdConf {
+	switch {
+	case l.VMIIntrospect:
+		// Deliberately NOT on the cmdline: urunc bakes the environment into the
+		// boot initrd (/vmi-env) and vmi-init exports it. The cmdline is echoed to
+		// the console, readable through /proc/cmdline by every process in the
+		// guest, and captured in the telemetry stream - so an API token passed
+		// with -e would be published three ways over. Keeping it out also stops
+		// large environments from tripping the kernel's 32-word init argv/env cap.
+	case !l.InitrdConf:
 		for _, eVar := range l.Env {
 			bootParams += " " + eVar
 		}
-	} else {
+	default:
 		if l.RootFsType == "initrd" {
 			bootParams += " URUNIT_CONFIG="
 			bootParams += urunitConfPath
@@ -129,6 +155,17 @@ func (l *Linux) CommandString() (string, error) {
 	}
 	if !IsIPInSubnet(l.Net) {
 		bootParams += " URUNIT_DEFROUTE=1"
+	}
+	// Reserve the telemetry export region before the page allocator can claim it.
+	// This must precede init=/rdinit= so the customer argv stays last on the line.
+	if l.VMIIntrospect {
+		bootParams += " " + vmiTelemMemmap
+	}
+	// Option C: boot the injected telemetry initrd as an initramfs and run its
+	// /init even when the customer rootfs is a block device (mounted later by
+	// /init and switch_root'd into).
+	if l.VMIInit {
+		rdinit = "rd"
 	}
 	if l.App != "" {
 		initParams := rdinit + "init=" + l.App + " -- " + l.Command
@@ -236,6 +273,22 @@ func (l *Linux) Init(data types.UnikernelParams) error {
 	l.Env = data.EnvVars
 	l.Monitor = data.Monitor
 	l.ProcConfig = data.ProcConf
+
+	// Option C: for a stock image on an initrd rootfs with introspection on,
+	// make the injected /init the rdinit entrypoint and fold the parsed customer
+	// entrypoint back into the argv after "--" so /init can exec it verbatim.
+	// This runs before the urunit detection below so InitrdConf stays false
+	// (the customer image supplies its own init; urunit config is not written).
+	l.VMIIntrospect = data.VMIIntrospect
+	l.VMIInit = data.VMIIntrospect && (l.RootFsType == "initrd" || l.RootFsType == "block")
+	if l.VMIInit {
+		if l.Command != "" {
+			l.Command = l.App + " " + l.Command
+		} else {
+			l.Command = l.App
+		}
+		l.App = "/init"
+	}
 
 	// if the application contains urunit, then we assume
 	// that the init process is based on our urunit

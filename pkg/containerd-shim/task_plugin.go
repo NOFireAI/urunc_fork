@@ -22,6 +22,7 @@ import (
 	"github.com/containerd/containerd/plugin"
 	runcTask "github.com/containerd/containerd/runtime/v2/runc/task"
 	"github.com/containerd/containerd/runtime/v2/shim"
+	"github.com/urunc-dev/urunc/pkg/unikontainers"
 )
 
 func init() {
@@ -51,6 +52,8 @@ func init() {
 			return &taskService{
 				TaskService:       inner,
 				containerdAddress: ic.Address,
+				vmiCfg:            make(map[string]unikontainers.VMIConfig),
+				vmiSidecars:       make(map[string]*unikontainers.VMISidecar),
 			}, nil
 		},
 	})

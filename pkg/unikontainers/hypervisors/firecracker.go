@@ -45,11 +45,23 @@ type FirecrackerBootSource struct {
 	InitrdPath string `json:"initrd_path,omitempty"`
 }
 
+// stagedCPUTemplatePath is the guest-relative path (inside the monitor rootfs)
+// where the custom CPU template is staged; the pivot_root'd VMM reads it here.
+// Kept in sync with the staging in unikontainers.stageVMIBootFiles.
+const stagedCPUTemplatePath = "/cpu-template.json"
+
 type FirecrackerMachine struct {
 	VcpuCount       uint   `json:"vcpu_count"`
 	MemSizeMiB      uint64 `json:"mem_size_mib"`
 	Smt             bool   `json:"smt"`
 	TrackDirtyPages bool   `json:"track_dirty_pages"`
+	// CpuTemplate normalises the CPUID the guest sees. Without it, the default
+	// CPUID passthrough can present an INCOHERENT feature set on newer hybrid
+	// hosts (e.g. vaes/avx_vnni present but avx2 masked), which makes runtimes
+	// that dispatch on CPUID (Bun/BoringSSL, as used by claude-code) execute an
+	// instruction the vCPU faults on -> SIGILL. A static template (e.g. "T2",
+	// Skylake parity) yields a coherent set. Set via URUNC_FC_CPU_TEMPLATE.
+	CpuTemplate string `json:"cpu_template,omitempty"`
 }
 
 type FirecrackerDrive struct {
@@ -77,6 +89,14 @@ type FirecrackerConfig struct {
 	Drives  []FirecrackerDrive    `json:"drives"`
 	NetIfs  []FirecrackerNet      `json:"network-interfaces,omitempty"`
 	VSock   FirecrackerVSockDev   `json:"vsock,omitempty"`
+	// CpuConfig is a GUEST-RELATIVE path to a custom CPU template (JSON with
+	// cpuid_modifiers). The template is staged into the monitor rootfs by
+	// stageVMIBootFiles, so this path resolves inside the pivot_root'd VMM's
+	// view. Unlike static templates (machine-config.cpu_template), a custom
+	// template is NOT gated to specific host CPU models, so it works on
+	// newer/hybrid hosts. Used to normalise an incoherent guest CPUID (e.g. mask
+	// vaes/avx_vnni exposed without avx2) so Bun/BoringSSL does not fault.
+	CpuConfig string `json:"cpu-config,omitempty"`
 }
 
 func (fc *Firecracker) Signal(pid int, signal unix.Signal) error {
@@ -118,6 +138,12 @@ func (fc *Firecracker) BuildExecCmd(args types.ExecArgs, ukernel types.Unikernel
 		cmdString += " --no-seccomp"
 	}
 
+	// Same trap as under hvi: a telemetry region reserved past the end of guest
+	// RAM boots fine and reads back as zeros.
+	if err := CheckMemmapFits(args.Command, args.MemSizeB); err != nil {
+		return nil, fmt.Errorf("firecracker: %w", err)
+	}
+
 	// VM config for Firecracker
 	fcMem := DefaultMemory
 	if args.MemSizeB != 0 {
@@ -142,6 +168,7 @@ func (fc *Firecracker) BuildExecCmd(args types.ExecArgs, ukernel types.Unikernel
 		MemSizeMiB:      fcMem,
 		Smt:             false,
 		TrackDirtyPages: false,
+		CpuTemplate:     os.Getenv("URUNC_FC_CPU_TEMPLATE"),
 	}
 
 	// Net config for Firecracker
@@ -193,6 +220,12 @@ func (fc *Firecracker) BuildExecCmd(args types.ExecArgs, ukernel types.Unikernel
 		Drives:  FCDrives,
 		NetIfs:  FCNet,
 		VSock:   FCVSockDev,
+	}
+	// When a custom CPU template is requested, point fc at the guest-relative
+	// path where stageVMIBootFiles staged it inside the monitor rootfs (the VMM
+	// is pivot_root'd there, so a host path would not resolve).
+	if os.Getenv("URUNC_FC_CPU_CONFIG") != "" {
+		FCConfig.CpuConfig = stagedCPUTemplatePath
 	}
 	FCConfigJSON, err := json.Marshal(FCConfig)
 	if err != nil {

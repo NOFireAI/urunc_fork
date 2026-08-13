@@ -32,6 +32,13 @@ type initrdRootfs struct {
 	mounts             []specs.Mount
 	monRootfs          string
 	initrdHostFullPath string
+	// vmiIntrospect, when true, appends the VMI telemetry payload
+	// (init wrapper + telem-capture + urunit-agent) to the initrd so a
+	// stock customer image boots with rich eBPF + exec/console, no image
+	// change. vmiPayloadDir is the host dir staged by
+	// packaging/vmi-initrd/build-vmi-payload.sh.
+	vmiIntrospect bool
+	vmiPayloadDir string
 }
 
 func (i initrdRootfs) preSetup() error {
@@ -42,6 +49,14 @@ func (i initrdRootfs) postSetup() error {
 	err := initrd.CopyFileMountsToInitrd(i.initrdHostFullPath, i.mounts)
 	if err != nil {
 		return fmt.Errorf("failed to update guest's initrd: %w", err)
+	}
+
+	// Option C: inject the VMI telemetry payload into the (untouched) customer
+	// initrd so an unmodified OCI image boots with rich eBPF + exec/console.
+	if i.vmiIntrospect {
+		if err := initrd.AugmentInitrdForVMI(i.initrdHostFullPath, i.vmiPayloadDir); err != nil {
+			return fmt.Errorf("failed to inject VMI telemetry payload into initrd: %w", err)
+		}
 	}
 
 	return nil

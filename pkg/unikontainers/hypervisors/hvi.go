@@ -112,6 +112,12 @@ func (h *Hvi) BuildExecCmd(args types.ExecArgs, ukernel types.Unikernel) ([]stri
 	if vcpus == 0 {
 		vcpus = 1
 	}
+	// A telemetry region reserved past the end of guest RAM is not an error the
+	// guest reports: it boots, the sidecar attaches, and the region reads zero.
+	if err := CheckMemmapFits(args.Command, args.MemSizeB); err != nil {
+		return nil, fmt.Errorf("hvi: %w", err)
+	}
+
 	cmd := []string{
 		h.Path(), "boot",
 		"--kernel", kernel,

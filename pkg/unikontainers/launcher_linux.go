@@ -18,7 +18,14 @@
 package unikontainers
 
 import (
+	"fmt"
+	"os"
+	"runtime"
+	"strconv"
+	"strings"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/urunc-dev/urunc/pkg/unikontainers/types"
 )
@@ -54,7 +61,55 @@ func (linuxLauncher) launch(u *Unikontainer, vmm types.VMM, unikernel types.Unik
 		return err
 	}
 
+	// Pin the VMM to a fixed CPU set BEFORE execve. The affinity mask is preserved
+	// across execve and inherited by every thread the VMM spawns (its vCPUs), so
+	// firecracker reads a consistent CPUID at VM creation and never migrates
+	// across heterogeneous cores on hybrid hosts (P/E/LP-E) - migration there
+	// yields an incoherent guest CPUID that crashes CPUID-dispatching runtimes
+	// (e.g. Bun/BoringSSL in claude-code). No-op unless URUNC_FC_CPU_PIN is set.
+	if err := pinVMMToCPUs(os.Getenv("URUNC_FC_CPU_PIN")); err != nil {
+		uniklog.WithError(err).Warn("failed to pin VMM CPUs (continuing unpinned)")
+	}
+
 	// Execute the VMM using the command we built earlier.
 	uniklog.WithField("command", execCmd).Debug("Ready to execve VMM")
 	return syscall.Exec(vmm.Path(), execCmd, args.Environment) //nolint: gosec
+}
+
+// pinVMMToCPUs sets the calling thread's CPU affinity (preserved across the
+// subsequent execve and inherited by the VMM) to the CPUs named by spec, a
+// comma-separated list of ids and ranges, e.g. "0-3" or "0,2,4-7". The goroutine
+// is locked to its OS thread so the affinity applies to the exact thread that
+// execve's. Empty spec is a no-op.
+func pinVMMToCPUs(spec string) error {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return nil
+	}
+	var set unix.CPUSet
+	set.Zero()
+	for _, part := range strings.Split(spec, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if lo, hi, ok := strings.Cut(part, "-"); ok {
+			l, err1 := strconv.Atoi(strings.TrimSpace(lo))
+			h, err2 := strconv.Atoi(strings.TrimSpace(hi))
+			if err1 != nil || err2 != nil || l > h || l < 0 {
+				return fmt.Errorf("invalid cpu range %q", part)
+			}
+			for c := l; c <= h; c++ {
+				set.Set(c)
+			}
+		} else {
+			c, err := strconv.Atoi(part)
+			if err != nil || c < 0 {
+				return fmt.Errorf("invalid cpu id %q", part)
+			}
+			set.Set(c)
+		}
+	}
+	runtime.LockOSThread()
+	return unix.SchedSetaffinity(0, &set)
 }

@@ -327,6 +327,7 @@ func getMonitorResources(rfs rootfsBuilder, rootfsParams types.RootfsParams, vmm
 // rootfs. It is shared by InitialSetup (which gathers the monitor resources) and
 // Exec (which performs the per-rootfs actions).
 func (u *Unikontainer) newRootfsBuilder(rootfsParams types.RootfsParams, unikernel types.Unikernel, unikernelPath string, initrdPath string, memory uint64) rootfsBuilder {
+	vmiCfg := VMIConfigFromAnnotations(u.Spec.Annotations)
 	switch rootfsParams.Type {
 	case "block":
 		return blockRootfs{
@@ -339,12 +340,20 @@ func (u *Unikontainer) newRootfsBuilder(rootfsParams types.RootfsParams, unikern
 			uruncJSONPath: uruncJSONFilename,
 			guestType:     u.State.Annotations[annotType],
 			guest:         unikernel,
+			vmiIntrospect: vmiCfg.Introspect,
+			vmiKernelHost: vmiCfg.BootKernelPath(),
+			vmiInitrdHost: vmiCfg.Initrd,
+			vmiPayloadDir: vmiCfg.PayloadDir,
+			vmiCmd:        u.Spec.Process.Args,
+			vmiEnv:        u.Spec.Process.Env,
 		}
 	case "initrd":
 		return initrdRootfs{
 			mounts:             u.Spec.Mounts,
 			initrdHostFullPath: filepath.Join(rootfsParams.MonRootfs, rootfsParams.Path),
 			monRootfs:          rootfsParams.MonRootfs,
+			vmiIntrospect:      vmiCfg.Introspect,
+			vmiPayloadDir:      vmiCfg.PayloadDir,
 		}
 	case "virtiofs", "9pfs":
 		return sharedfsRootfs{
@@ -457,6 +466,9 @@ func (u *Unikontainer) Exec(metrics m.Writer) error {
 	}).Debug("guest rootfs params")
 
 	rfsBuilder := u.newRootfsBuilder(rootfsParams, unikernel, unikernelPath, initrdPath, vmmArgs.MemSizeB)
+	if rootfsParams.Type == "block" && VMIConfigFromAnnotations(u.Spec.Annotations).Introspect {
+		vmmArgs.InitrdPath = vmiBootInitrdGuestPath
+	}
 	if rootfsParams.Type == "virtiofs" || rootfsParams.Type == "9pfs" {
 		// Update the paths of the files we need to pass in the monitor process.
 		vmmArgs.UnikernelPath = adjustPathsForSharedfs(vmmArgs.UnikernelPath)
@@ -570,6 +582,28 @@ func (u *Unikontainer) Exec(metrics m.Writer) error {
 
 	// ExecArgs
 	vmmArgs.Command = unikernelCmd
+
+	// VMI introspection: activate the forked VMM's telem control socket so the
+	// shim-spawned sidecar can attach. The fork creates the socket only when
+	// FIRECRACKER_TELEM_CONTROL_SOCK names a path in its own mount ns (bound at
+	// /urunc-telem.sock -> /proc/<pid>/root/urunc-telem.sock for the sidecar).
+	// Opt-in via the same annotation the shim gates the sidecar on.
+	if u.State.Annotations[AnnotVMIIntrospect] == "true" {
+		vmmArgs.Environment = append(vmmArgs.Environment,
+			"FIRECRACKER_TELEM_CONTROL_SOCK=/"+controlSockName)
+		// Self-introspection cadence, carried the same way for the same reason:
+		// the monitor reads its own configuration out of the environment, so
+		// neither the shim nor the sidecar needs to know about it.
+		if v := u.State.Annotations[AnnotVMIIntrospectInterval]; v != "" {
+			vmmArgs.Environment = append(vmmArgs.Environment,
+				"VMI_INTROSPECT_INTERVAL="+v)
+		}
+		// hvi reads this one straight from its environment, so unlike the cadence
+		// it needs no per-monitor translation.
+		if v := u.State.Annotations[AnnotVMIWalkBench]; v != "" {
+			vmmArgs.Environment = append(vmmArgs.Environment, "HVI_WALK_BENCH="+v)
+		}
+	}
 
 	// pivot
 	_, err = findNS(u.Spec.Linux.Namespaces, specs.MountNamespace)

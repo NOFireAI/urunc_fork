@@ -107,6 +107,11 @@ type UnikernelParams struct {
 	Block      []BlockDevParams
 	Rootfs     RootfsParams  // Information about rootfs
 	ProcConf   ProcessConfig // Information for the process execution inside the guest
+	// VMIIntrospect is true when com.urunc.vmi.introspect=true. For an initrd
+	// rootfs it redirects init to the injected VMI telemetry wrapper (/init),
+	// which mounts tracefs, starts the capture/exec agents, then execs the
+	// customer entrypoint — Option C zero-image-change telemetry injection.
+	VMIIntrospect bool
 }
 
 // ExecArgs holds the data required by Execve to start the VMM

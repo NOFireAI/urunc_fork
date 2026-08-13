@@ -147,11 +147,12 @@ func buildExecContext(spec *specs.Spec, annot map[string]string, containerID, bu
 	}
 
 	unikernelParams := types.UnikernelParams{
-		CmdLine:  cmdline,
-		EnvVars:  envVars,
-		Monitor:  monitorFamily(vmmType),
-		Version:  unikernelVersion,
-		ProcConf: procAttrs,
+		CmdLine:       cmdline,
+		EnvVars:       envVars,
+		Monitor:       monitorFamily(vmmType),
+		Version:       unikernelVersion,
+		ProcConf:      procAttrs,
+		VMIIntrospect: annot[AnnotVMIIntrospect] == "true",
 	}
 	if len(unikernelParams.CmdLine) == 0 {
 		unikernelParams.CmdLine = strings.Fields(annot[annotCmdLine])

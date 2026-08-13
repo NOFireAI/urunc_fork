@@ -23,6 +23,10 @@ func TestHviDarwinGenericContainerBoot(t *testing.T) {
 		Sharedfs: types.SharedfsParams{
 			Type: "virtiofs", Path: "/store/alpine/rootfs", Tag: "rootfs", ReadOnly: true,
 		},
+		SharedDirs: []types.SharedDirParams{
+			{Path: "/host/config", Tag: "share0", ReadOnly: true},
+			{Path: "/host/models", Tag: "share1", ReadOnly: true},
+		},
 	}
 	argv, err := hvi.BuildExecCmd(args, &fakeUnikernel{})
 	if err != nil {
@@ -34,6 +38,8 @@ func TestHviDarwinGenericContainerBoot(t *testing.T) {
 		"--kernel /host/Image",
 		"--initramfs /instance/container-initrd",
 		"--share-ro /store/alpine/rootfs rootfs",
+		"--share-ro /host/config share0",
+		"--share-ro /host/models share1",
 		"--cmdline rdinit=/vz-init console=ttyAMA0",
 		"--agent-sock /instance/agent.sock",
 		"--net",
@@ -45,7 +51,7 @@ func TestHviDarwinGenericContainerBoot(t *testing.T) {
 	}
 }
 
-func TestHviDarwinRejectsWritableOrMultipleShares(t *testing.T) {
+func TestHviDarwinRejectsWritableOrDuplicateShares(t *testing.T) {
 	hvi := NewHviDarwin("/opt/hvi")
 	_, err := hvi.BuildExecCmd(types.ExecArgs{
 		KernelPath: "/host/Image",
@@ -58,7 +64,15 @@ func TestHviDarwinRejectsWritableOrMultipleShares(t *testing.T) {
 		KernelPath: "/host/Image",
 		SharedDirs: []types.SharedDirParams{{Path: "/host/extra", Tag: "extra"}},
 	}, &fakeUnikernel{})
-	if err == nil || !strings.Contains(err.Error(), "one virtio-fs export") {
-		t.Fatalf("additional export: got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "read-only") {
+		t.Fatalf("writable additional export: got %v", err)
+	}
+	_, err = hvi.BuildExecCmd(types.ExecArgs{
+		KernelPath: "/host/Image",
+		Sharedfs:   types.SharedfsParams{Path: "/host/rootfs", Tag: "same", ReadOnly: true},
+		SharedDirs: []types.SharedDirParams{{Path: "/host/extra", Tag: "same", ReadOnly: true}},
+	}, &fakeUnikernel{})
+	if err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("duplicate tag: got %v", err)
 	}
 }

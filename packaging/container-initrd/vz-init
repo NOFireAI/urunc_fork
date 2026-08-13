@@ -66,13 +66,18 @@ fi
 [ -s /urunc-hosts ] && $BB cp /urunc-hosts /newroot/etc/hosts 2>/dev/null
 [ -s /urunc-hostname ] && $BB cp /urunc-hostname /newroot/etc/hostname 2>/dev/null
 
-# Additional Vz shares are encoded as: tag<TAB>absolute-guest-path. They are
-# mounted before the handoff so the OCI process sees the requested filesystem.
+# Additional virtiofs shares are encoded as:
+# tag<TAB>absolute-guest-path<TAB>ro|rw. They are mounted before the handoff so
+# the OCI process sees the requested filesystem with its requested mode.
 if [ -f /urunc-mounts ]; then
-  while IFS="	" read -r _tag _dest; do
+  while IFS="	" read -r _tag _dest _mode; do
     [ -n "$_tag" ] && [ -n "$_dest" ] || continue
     $BB mkdir -p "/newroot$_dest"
-    $BB mount -t virtiofs "$_tag" "/newroot$_dest" 2>/dev/null
+    if [ "$_mode" = ro ]; then
+      $BB mount -t virtiofs -o ro "$_tag" "/newroot$_dest" 2>/dev/null
+    else
+      $BB mount -t virtiofs "$_tag" "/newroot$_dest" 2>/dev/null
+    fi
   done < /urunc-mounts
 fi
 

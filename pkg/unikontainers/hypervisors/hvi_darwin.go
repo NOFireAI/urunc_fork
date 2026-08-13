@@ -59,18 +59,34 @@ func (h *HviDarwin) BuildExecCmd(args types.ExecArgs, _ types.Unikernel) ([]stri
 	if args.BlockDevPath != "" {
 		cmd = append(cmd, "--disk", args.BlockDevPath)
 	}
-	if args.Sharedfs.Path != "" {
-		if !args.Sharedfs.ReadOnly {
-			return nil, fmt.Errorf("hvi currently supports only read-only virtio-fs exports")
+	seenTags := make(map[string]bool)
+	appendShare := func(path, tag string, readOnly bool) error {
+		if path == "" || tag == "" {
+			return fmt.Errorf("hvi virtio-fs exports require a path and tag")
 		}
+		if !readOnly {
+			return fmt.Errorf("hvi currently supports only read-only virtio-fs exports")
+		}
+		if seenTags[tag] {
+			return fmt.Errorf("duplicate hvi virtio-fs tag %q", tag)
+		}
+		seenTags[tag] = true
+		cmd = append(cmd, "--share-ro", path, tag)
+		return nil
+	}
+	if args.Sharedfs.Path != "" {
 		tag := args.Sharedfs.Tag
 		if tag == "" {
 			tag = "rootfs"
 		}
-		cmd = append(cmd, "--share-ro", args.Sharedfs.Path, tag)
+		if err := appendShare(args.Sharedfs.Path, tag, args.Sharedfs.ReadOnly); err != nil {
+			return nil, err
+		}
 	}
-	if len(args.SharedDirs) != 0 {
-		return nil, fmt.Errorf("hvi currently supports one virtio-fs export; additional shared directories are not yet supported")
+	for _, dir := range args.SharedDirs {
+		if err := appendShare(dir.Path, dir.Tag, dir.ReadOnly); err != nil {
+			return nil, err
+		}
 	}
 	if args.Net.TapDev != "" {
 		cmd = append(cmd, "--net")

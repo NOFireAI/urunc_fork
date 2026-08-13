@@ -1,0 +1,98 @@
+#!/busybox sh
+# VMI telemetry init  (rdinit=/init, from the host-supplied injected initrd).
+# Runs before the customer entrypoint. The customer OCI image is UNMODIFIED:
+#   - block rootfs (mountRootfs=true): customer fs arrives on /dev/vda; we mount
+#     it and switch_root into it after starting telemetry.
+#   - initrd rootfs: the customer fs IS this initramfs; we exec in place.
+# eBPF is system-wide, so telem-capture keeps observing the workload across the
+# switch_root even though its own backing files are freed with the initramfs.
+BB=/busybox
+$BB mount -t proc     proc /proc 2>/dev/null
+$BB mount -t sysfs    sys  /sys  2>/dev/null
+$BB mount -t devtmpfs dev  /dev  2>/dev/null
+$BB mkdir -p /sys/kernel/tracing
+# tracefs REQUIRED for telem-capture tracepoints (else rich capture is disabled)
+$BB mount -t tracefs tracefs /sys/kernel/tracing 2>/dev/null
+
+# Start the rich eBPF capture + the exec/console agent (both host-injected).
+[ -x /vmi-telem-capture ] && /vmi-telem-capture >/var/log/telem-capture.log 2>&1 &
+[ -x /vmi-urunit-agent ]  && /vmi-urunit-agent  >/var/log/urunit-agent.log  2>&1 &
+# Give the eBPF programs a moment to attach before the workload starts.
+$BB sleep 1
+
+# Reconstruct the customer entrypoint. Prefer the out-of-band /vmi-cmd file
+# (one argv element per line, baked into this initrd by urunc) which is immune
+# to the kernel cmdline tokenizer word-splitting quoted multi-word arguments.
+# Fall back to the argv after "--" for simple entrypoints.
+if [ -f /vmi-cmd ]; then
+  set --
+  while IFS= read -r _a; do set -- "$@" "$_a"; done < /vmi-cmd
+fi
+
+# Restore the container environment (one KEY=VALUE per line). It travels here
+# rather than on the kernel cmdline because the cmdline is echoed to the console,
+# exposed through /proc/cmdline to every process in the guest, and captured in
+# the telemetry stream - so a token passed with -e would leak three ways over.
+# The exported environment survives the switch_root exec into the entrypoint.
+if [ -f /vmi-env ]; then
+  while IFS= read -r _e; do
+    case "$_e" in ''|'#'*) continue ;; *=*) export "$_e" ;; esac
+  done < /vmi-env
+fi
+
+# Hand off to the UNMODIFIED customer entrypoint.
+if [ -b /dev/vda ]; then
+  # Block rootfs: pivot into the customer filesystem, keep telemetry running.
+  $BB mkdir -p /newroot
+  if $BB mount /dev/vda /newroot 2>/dev/null || $BB mount -o ro /dev/vda /newroot 2>/dev/null; then
+    # keep the injected agents visible to a debugger inside the new root
+    $BB mkdir -p /newroot/run/vmi 2>/dev/null
+    # switch_root replaces the root, so the proc/sys/dev mounted above (in the
+    # initramfs) do NOT follow us into the customer filesystem. Nothing else will
+    # provide them either: the customer entrypoint is exec'd directly as PID 1,
+    # with no container runtime and no init system underneath it. Shells and
+    # coreutils do not care, which is what makes this easy to miss - but any
+    # runtime that reads /proc at startup does. JSC/mimalloc (every Bun binary,
+    # e.g. claude-code) reads /proc/self/maps and /proc/meminfo and abort()s
+    # SILENTLY without procfs: exit 134, empty stderr, every run.
+    $BB mkdir -p /newroot/proc /newroot/sys /newroot/dev
+    $BB mount -t proc     proc /newroot/proc 2>/dev/null
+    $BB mount -t sysfs    sys  /newroot/sys  2>/dev/null
+    $BB mount -t devtmpfs dev  /newroot/dev  2>/dev/null
+    $BB mkdir -p /newroot/dev/pts /newroot/dev/shm
+    $BB mount -t devpts devpts /newroot/dev/pts 2>/dev/null
+    $BB mount -t tmpfs -o mode=1777 shm /newroot/dev/shm 2>/dev/null
+    # tracefs again under the new root, so in-guest debugging still works.
+    $BB mkdir -p /newroot/sys/kernel/tracing
+    $BB mount -t tracefs tracefs /newroot/sys/kernel/tracing 2>/dev/null
+    # Same story as /proc: the runtime is handed the container's network identity
+    # as bind mounts over /etc/resolv.conf, /etc/hosts and /etc/hostname, and
+    # booting the image as a block device applies none of them - so the guest
+    # comes up with an empty resolv.conf and every name lookup fails while raw IP
+    # egress works. urunc stages them into this initrd; install them the way the
+    # bind mounts would have, i.e. the container's copy wins over the image's.
+    $BB mkdir -p /newroot/etc
+    for _f in resolv.conf hosts hostname; do
+      case "$_f" in
+        resolv.conf) _s=/vmi-resolv.conf ;;
+        hosts)       _s=/vmi-hosts ;;
+        hostname)    _s=/vmi-hostname ;;
+      esac
+      [ -s "$_s" ] && $BB cp "$_s" "/newroot/etc/$_f" 2>/dev/null
+    done
+    # busybox switch_root execs the new init via execv (no PATH search), so a
+    # bare entrypoint like "bash" must be resolved to an absolute path that
+    # exists inside the customer rootfs before we hand off.
+    cmd="$1"
+    case "$cmd" in
+      /*) : ;;
+      *)  for d in /usr/local/sbin /usr/local/bin /usr/sbin /usr/bin /sbin /bin; do
+            if [ -x "/newroot$d/$cmd" ]; then cmd="$d/$cmd"; break; fi
+          done ;;
+    esac
+    shift 2>/dev/null || true
+    exec $BB switch_root /newroot "$cmd" "$@"
+  fi
+  echo "vmi-init: could not mount /dev/vda; exec in place" >&2
+fi
+exec "$@"   # initrd rootfs (customer fs is this initramfs) or fallback

@@ -82,3 +82,24 @@ func TestHviDarwinWritableAndDuplicateShares(t *testing.T) {
 		t.Fatalf("duplicate tag: got %v", err)
 	}
 }
+
+func TestHviDarwinGatewayNetwork(t *testing.T) {
+	hvi := NewHviDarwin("/opt/hvi")
+	argv, err := hvi.BuildExecCmd(types.ExecArgs{
+		KernelPath: "/host/Image",
+		Net: types.NetDevParams{
+			TapDev:     "en0",
+			UnixSocket: "/run/hull/gateway.qemu",
+		},
+	}, &fakeUnikernel{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(argv, " ")
+	if !strings.Contains(got, "--net-gateway /run/hull/gateway.qemu") {
+		t.Fatalf("gateway network missing from %s", got)
+	}
+	if strings.Contains(got, " --net ") || strings.HasSuffix(got, " --net") {
+		t.Fatalf("built-in network must not accompany gateway network: %s", got)
+	}
+}

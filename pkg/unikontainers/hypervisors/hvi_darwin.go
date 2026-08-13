@@ -90,7 +90,9 @@ func (h *HviDarwin) BuildExecCmd(args types.ExecArgs, _ types.Unikernel) ([]stri
 			return nil, err
 		}
 	}
-	if args.Net.TapDev != "" {
+	if args.Net.UnixSocket != "" {
+		cmd = append(cmd, "--net-gateway", args.Net.UnixSocket)
+	} else if args.Net.TapDev != "" {
 		cmd = append(cmd, "--net")
 	}
 	if args.AgentSockPath != "" {

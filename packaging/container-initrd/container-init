@@ -100,6 +100,16 @@ if [ -b /dev/vda ]; then
           done ;;
     esac
     shift 2>/dev/null || true
+    # Hand over to urunit, not to the entrypoint: switch_root exec's whatever
+    # it is given as the new init, so an entrypoint that exits takes PID 1 with
+    # it and panics the kernel. urunit runs it as a child, reaps, syncs,
+    # unmounts and asks for power-off. See vz-init for the full reasoning.
+    if [ -x /urunit ]; then
+      $BB mkdir -p /newroot/run/urunc
+      $BB cp /urunit /newroot/run/urunc/urunit
+      $BB chmod 0755 /newroot/run/urunc/urunit
+      exec $BB switch_root /newroot /run/urunc/urunit "$cmd" "$@"
+    fi
     exec $BB switch_root /newroot "$cmd" "$@"
   fi
   echo "container-init: could not mount /dev/vda; exec in place" >&2
@@ -109,4 +119,10 @@ fi
 if [ -x /urunit-agent ]; then
   /urunit-agent >/dev/hvc0 2>&1 &
 fi
-exec "$@"   # initrd rootfs (customer fs is this initramfs) or fallback
+# initrd rootfs (the customer fs is this initramfs) or fallback. Same handover
+# as above: urunit keeps PID 1 alive past the entrypoint and powers the VM off
+# afterwards. No copy needed here -- we never leave this filesystem.
+if [ -x /urunit ]; then
+  exec /urunit "$@"
+fi
+exec "$@"

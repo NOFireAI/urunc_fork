@@ -135,4 +135,25 @@ case "$cmd" in
      done ;;
 esac
 shift 2>/dev/null || true
+
+# Hand over to urunit rather than to the entrypoint, so that PID 1 outlives it.
+# switch_root exec's whatever it is given as the new init, and an entrypoint
+# that exits -- `echo`, a build step, any one-shot command -- takes init with
+# it: "Kernel panic - not syncing: Attempted to kill init!". The VM then never
+# powers off and the runtime waits for a machine that is not coming back.
+#
+# urunit runs the entrypoint as its child, reaps it, syncs, unmounts and asks
+# for power-off, which on arm64 is a PSCI call the VMM answers by stopping.
+# It takes the command on argv and, with no URUNIT_CONFIG set, exec's it with
+# execvp -- so the environment restored above is inherited, not dropped.
+#
+# Copied in the way the agent already is; the initrd is gone after the switch.
+if [ -x /urunit ]; then
+  $BB mkdir -p /newroot/run/urunc
+  $BB cp /urunit /newroot/run/urunc/urunit
+  $BB chmod 0755 /newroot/run/urunc/urunit
+  exec $BB switch_root /newroot /run/urunc/urunit "$cmd" "$@"
+fi
+# No urunit in this initrd (one built before it was added): boot the way we
+# always did. A long-lived entrypoint is unaffected; a short one still panics.
 exec $BB switch_root /newroot "$cmd" "$@"

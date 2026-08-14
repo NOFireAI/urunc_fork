@@ -40,6 +40,14 @@ var containerBootPayloadFiles = []struct {
 	// applet (e.g. `busybox sh`) when argv[0]'s basename is "busybox". A renamed
 	// binary makes every invocation "applet not found" (exit 127).
 	{dest: "/busybox", src: "busybox"},
+	// urunit is PID 1 once the init scripts hand over: it runs the image's
+	// entrypoint as its child so that the entrypoint exiting reaps, syncs,
+	// unmounts and powers the VM off, rather than panicking the kernel with
+	// "Attempted to kill init!" and leaving a machine nobody can stop.
+	//
+	// Optional so that an initrd built before this still boots -- the scripts
+	// fall back to exec'ing the entrypoint directly when it is absent.
+	{dest: "/urunit", src: "urunit", optional: true},
 	{dest: "/urunit-agent", src: "urunit-agent"},
 }
 

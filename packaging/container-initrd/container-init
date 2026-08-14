@@ -9,6 +9,16 @@ $BB mount -t proc     proc /proc 2>/dev/null
 $BB mount -t sysfs    sys  /sys  2>/dev/null
 $BB mount -t devtmpfs dev  /dev  2>/dev/null
 
+# HVI has no emulated wall-clock RTC. Hull stages the host epoch in the
+# initrd; apply it before package managers or TLS clients run.
+if [ -s /urunc-epoch ]; then
+  _epoch=$($BB cat /urunc-epoch)
+  case "$_epoch" in
+    ''|*[!0-9]*) ;;
+    *) $BB date -u -s "@$_epoch" >/dev/null 2>&1 ;;
+  esac
+fi
+
 # Reconstruct the container entrypoint. Prefer the out-of-band /urunc-cmd file
 # (one argv element per line, baked into this initrd by urunc) which is immune
 # to the kernel cmdline tokenizer word-splitting quoted multi-word arguments.

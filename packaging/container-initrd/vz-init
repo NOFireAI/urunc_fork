@@ -1,7 +1,8 @@
 #!/busybox sh
-# Vz/virtiofs early init. The OCI rootfs remains an unpacked host directory,
-# exported read-only as the "rootfs" virtiofs tag. A tmpfs-backed overlay gives
-# the guest a writable root without changing the shared image.
+# Generic macOS virtiofs early init. Vz exports the OCI cache read-only and uses
+# a tmpfs-backed overlay. HVI can instead export Hull's per-instance APFS clone
+# read-write and mount it directly, preserving changes without charging them to
+# guest RAM or changing the cached image.
 BB=/busybox
 $BB mount -t proc proc /proc 2>/dev/null
 $BB mount -t sysfs sys /sys 2>/dev/null
@@ -29,23 +30,30 @@ if [ -f /urunc-rosetta ]; then
 fi
 
 $BB mkdir -p /lowerroot /newroot /run/urunc-overlay
-if ! $BB mount -t virtiofs rootfs /lowerroot; then
-  echo "vz-init: could not mount virtiofs tag rootfs" >&2
-  exec $BB sh
-fi
-
-# macOS virtiofs cannot perform every mutation expected by Linux package
-# managers (notably temporary mode-000 files). Keep it as the immutable lower
-# layer and put all guest writes in initramfs-backed tmpfs.
-$BB mount -t tmpfs tmpfs /run/urunc-overlay
-$BB mkdir -p /run/urunc-overlay/upper /run/urunc-overlay/work
-if ! $BB mount -t overlay overlay \
-  -o lowerdir=/lowerroot,upperdir=/run/urunc-overlay/upper,workdir=/run/urunc-overlay/work \
-  /newroot; then
-  echo "vz-init: overlay unavailable; using virtiofs root directly" >&2
-  $BB umount /lowerroot 2>/dev/null
+if [ -f /urunc-rootfs-direct ]; then
   if ! $BB mount -t virtiofs rootfs /newroot; then
+    echo "vz-init: could not mount writable virtiofs tag rootfs" >&2
     exec $BB sh
+  fi
+else
+  if ! $BB mount -t virtiofs rootfs /lowerroot; then
+    echo "vz-init: could not mount virtiofs tag rootfs" >&2
+    exec $BB sh
+  fi
+
+  # Virtualization.framework's virtiofs cannot perform every mutation expected
+  # by Linux package managers (notably temporary mode-000 files). Keep it as the
+  # immutable lower layer and put all guest writes in initramfs-backed tmpfs.
+  $BB mount -t tmpfs tmpfs /run/urunc-overlay
+  $BB mkdir -p /run/urunc-overlay/upper /run/urunc-overlay/work
+  if ! $BB mount -t overlay overlay \
+    -o lowerdir=/lowerroot,upperdir=/run/urunc-overlay/upper,workdir=/run/urunc-overlay/work \
+    /newroot; then
+    echo "vz-init: overlay unavailable; using virtiofs root directly" >&2
+    $BB umount /lowerroot 2>/dev/null
+    if ! $BB mount -t virtiofs rootfs /newroot; then
+      exec $BB sh
+    fi
   fi
 fi
 
@@ -61,7 +69,7 @@ if [ -f /urunc-env ]; then
 fi
 
 # Recreate the standard mounts after switch_root. DHCP exposes resolver data in
-# /proc/net/pnp; copy it through the writable upper layer before changing root.
+# /proc/net/pnp; copy it into the selected writable root before changing root.
 $BB mkdir -p /newroot/proc /newroot/sys /newroot/dev /newroot/tmp /newroot/etc
 $BB mount -t proc proc /newroot/proc 2>/dev/null
 $BB mount -t sysfs sys /newroot/sys 2>/dev/null
@@ -72,7 +80,7 @@ $BB mount -t tmpfs -o mode=1777 shm /newroot/dev/shm 2>/dev/null
 
 # OCI extraction onto a macOS-owned cache cannot reliably preserve Linux's
 # sticky bit (the cached /tmp commonly arrives as 0755). Container runtimes
-# normally supply a writable 01777 /tmp; recreate that contract in the overlay
+# normally supply a writable 01777 /tmp; recreate that contract in the rootfs
 # before an unprivileged process such as `_apt` tries to create temporary files.
 $BB chmod 1777 /newroot/tmp 2>/dev/null
 if [ -s /urunc-resolv.conf ]; then
@@ -102,7 +110,7 @@ if [ -f /urunc-mounts ]; then
   done < /urunc-mounts
 fi
 
-# Install the initrd's static agent in the writable overlay, then start it with
+# Install the initrd's static agent in the writable root, then start it with
 # the container root already in effect. Exec sessions consequently see the OCI
 # filesystem, while the shared read-only lower directory stays unchanged.
 if [ -x /urunit-agent ]; then

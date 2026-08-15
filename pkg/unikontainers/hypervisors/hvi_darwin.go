@@ -51,6 +51,15 @@ func (h *HviDarwin) BuildExecCmd(args types.ExecArgs, _ types.Unikernel) ([]stri
 		"--mem-mib", strconv.FormatUint(mem, 10),
 		"--cpus", strconv.FormatUint(uint64(vcpus), 10),
 	}
+	// Tell the file server who the workload is, so the shared directories
+	// come back owned by it. Only when it is not root: root is hvi's default,
+	// and not passing the flags keeps this working against an hvi that
+	// predates them.
+	if args.GuestUID != 0 || args.GuestGID != 0 {
+		cmd = append(cmd,
+			"--fs-uid", strconv.FormatUint(uint64(args.GuestUID), 10),
+			"--fs-gid", strconv.FormatUint(uint64(args.GuestGID), 10))
+	}
 	if args.InitrdPath != "" {
 		cmd = append(cmd, "--initramfs", args.InitrdPath)
 	}

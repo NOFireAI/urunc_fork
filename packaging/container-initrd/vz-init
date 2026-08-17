@@ -85,8 +85,16 @@ $BB mount -t tmpfs -o mode=1777 shm /newroot/dev/shm 2>/dev/null
 $BB chmod 1777 /newroot/tmp 2>/dev/null
 if [ -s /urunc-resolv.conf ]; then
   $BB cp /urunc-resolv.conf /newroot/etc/resolv.conf 2>/dev/null
-elif [ -s /proc/net/pnp ]; then
-  $BB cp /proc/net/pnp /newroot/etc/resolv.conf 2>/dev/null
+elif $BB grep -q '^nameserver' /proc/net/pnp 2>/dev/null; then
+  # Not [ -s /proc/net/pnp ]: procfs reports st_size 0 for this file whatever
+  # it contains, so the size test is false even when DHCP filled it in, and
+  # this branch had never once run. The guest came up with the empty
+  # resolv.conf from the image and every name lookup failed while egress by
+  # address worked. Test for the content we actually want instead.
+  #
+  # Only the resolver directives are taken: pnp also carries "bootserver" and
+  # a "#PROTO:" line, which are not resolv.conf's to interpret.
+  $BB grep -E '^(nameserver|domain|search)' /proc/net/pnp > /newroot/etc/resolv.conf 2>/dev/null
 fi
 [ -s /urunc-hosts ] && $BB cp /urunc-hosts /newroot/etc/hosts 2>/dev/null
 [ -s /urunc-hostname ] && $BB cp /urunc-hostname /newroot/etc/hostname 2>/dev/null

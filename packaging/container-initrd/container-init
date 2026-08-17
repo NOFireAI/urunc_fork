@@ -88,7 +88,39 @@ if [ -b /dev/vda ]; then
       esac
       [ -s "$_s" ] && $BB cp "$_s" "/newroot/etc/$_f" 2>/dev/null
     done
+    # Fall back to what the kernel learned by DHCP, as vz-init does. hull only
+    # stages /urunc-resolv.conf when it has a resolver to name - with a plain
+    # NAT and no gateway it has none - and without this the block guest keeps
+    # whatever the image shipped, which is usually nothing. Name resolution
+    # then fails while egress by address still works, from a file the image
+    # looks responsible for.
+    # Tested by content, not by [ -s /proc/net/pnp ]: procfs reports st_size 0
+    # for that file however much it holds, so a size test is false even when
+    # DHCP filled it in. vz-init carried the same mistake and its fallback had
+    # therefore never run once.
+    if [ ! -s /newroot/etc/resolv.conf ] && $BB grep -q '^nameserver' /proc/net/pnp 2>/dev/null; then
+      $BB grep -E '^(nameserver|domain|search)' /proc/net/pnp > /newroot/etc/resolv.conf 2>/dev/null
+    fi
     $BB chmod 0644 /newroot/etc/resolv.conf /newroot/etc/hosts /newroot/etc/hostname 2>/dev/null
+
+    # Additional virtiofs shares, encoded by hull as
+    # tag<TAB>absolute-guest-path<TAB>ro|rw.
+    #
+    # vz-init has always mounted these; this path never did, so a block rootfs
+    # booted with --shared-dir came up with the share simply absent - no error,
+    # just an empty directory where the workspace should be. Mounted before the
+    # handoff so the entrypoint sees them, exactly as on the virtiofs path.
+    if [ -f /urunc-mounts ]; then
+      while IFS="	" read -r _tag _dest _mode; do
+        [ -n "$_tag" ] && [ -n "$_dest" ] || continue
+        $BB mkdir -p "/newroot$_dest"
+        if [ "$_mode" = ro ]; then
+          $BB mount -t virtiofs -o ro "$_tag" "/newroot$_dest" 2>/dev/null
+        else
+          $BB mount -t virtiofs "$_tag" "/newroot$_dest" 2>/dev/null
+        fi
+      done < /urunc-mounts
+    fi
     # busybox switch_root execs the new init via execv (no PATH search), so a
     # bare entrypoint like "bash" must be resolved to an absolute path that
     # exists inside the customer rootfs before we hand off.
